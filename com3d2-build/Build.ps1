@@ -47,10 +47,11 @@ $PmxBPath = Join-Path $Src 'COM3D2.ModelExportMMD\PmxBuilder.cs'
 Remove-JsonSidecar $PmxAPath
 Remove-JsonSidecar $PmxBPath
 
-# Correct an obvious decompilation typo in MMD B model metadata.
+# Correct the second model-comment assignment to CommentE without embedding
+# any non-ASCII text in this Windows PowerShell 5.1 script.
 $pmxBText = Get-Content -LiteralPath $PmxBPath -Raw
-$metadataPattern = 'pmxModelInfo\.Comment\s*=\s*"我的妹抖";\s*pmxModelInfo\.Comment\s*=\s*"my maid";'
-$metadataReplacement = 'pmxModelInfo.Comment = "我的妹抖";' + [Environment]::NewLine + '            pmxModelInfo.CommentE = "my maid";'
+$metadataPattern = '(?s)(pmxModelInfo\.Comment\s*=\s*".*?";\s*)pmxModelInfo\.Comment\s*=\s*("my maid";)'
+$metadataReplacement = '${1}pmxModelInfo.CommentE = ${2}'
 $patchedPmxBText = [regex]::Replace($pmxBText, $metadataPattern, $metadataReplacement, 1)
 if ($patchedPmxBText -eq $pmxBText) { throw 'MMD B metadata correction gate failed.' }
 [System.IO.File]::WriteAllText($PmxBPath, $patchedPmxBText, (New-Object System.Text.UTF8Encoding($false)))
@@ -68,7 +69,8 @@ foreach ($ref in @($project.SelectNodes('//m:Reference',$ns))) {
 
 $itemGroup = $project.SelectSingleNode('//m:ItemGroup[m:Reference]',$ns)
 function Add-Reference([string]$name,[string]$hint) {
-    $existing = $project.SelectSingleNode("//m:Reference[starts-with(@Include,'$name')]",$ns)
+    $query = "//m:Reference[starts-with(@Include,'" + $name + "')]"
+    $existing = $project.SelectSingleNode($query,$ns)
     if ($null -ne $existing) { return }
     $ref = $project.CreateElement('Reference',$ns.LookupNamespace('m'))
     $ref.SetAttribute('Include',$name)
@@ -103,8 +105,8 @@ $pmxBMarkers = @(
     'AddBone();',
     'ChangeBoneInfo();',
     'AddPhysics();',
-    '左足ＩＫ',
-    '右足ＩＫ',
+    'FindBone("Bip01 L Foot")',
+    'FindBone("Bip01 R Foot")',
     'pmxModelInfo.CommentE = "my maid";'
 )
 foreach ($marker in $pmxBMarkers) {
@@ -191,7 +193,7 @@ COM3D2 Sybaris ModelExportMMD R3
 
 BUILD-ONLY artifact. Do not install until promoted after validation.
 Target loader: Sybaris / UnityInjector
-Default format: MMD B, Japanese standard bone names and IK
+Default format: MMD B with standard MMD bone names and IK.
 MMD A remains available for English/raw armature export.
 External JSON dependency: removed.
 '@ | Set-Content -LiteralPath (Join-Path $Out 'README_BUILD_ONLY.txt') -Encoding UTF8
