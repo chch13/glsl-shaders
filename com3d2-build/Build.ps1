@@ -33,23 +33,14 @@ foreach ($name in @('Assembly-CSharp.dll','UnityEngine.dll','ExIni.dll','UnityIn
 
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'SybarisModelExportPlugin.cs') -Destination (Join-Path $Src 'COM3D2.ModelExportMMD.Plugin\ModelExportPlugin.cs') -Force
 
-# PMX material JSON was an optional sidecar introduced by the maintained fork.
-# Remove it so the UnityInjector package remains one DLL and does not carry the
-# obsolete Newtonsoft.Json 12.0.3 dependency.
+# The optional material JSON sidecar is removed so the package remains one DLL.
 $PmxPath = Join-Path $Src 'COM3D2.ModelExportMMD\PmxExporter.cs'
 $PmxText = Get-Content -LiteralPath $PmxPath -Raw
-$PmxText = $PmxText.Replace("using Newtonsoft.Json;`r`n", '').Replace("using Newtonsoft.Json;`n", '')
-$jsonBlockCrLf = "            StreamWriter writer = new StreamWriter(Path.Combine(ExportFolder, ExportName + \".json\"));`r`n            string jsonInfo = JsonConvert.SerializeObject(materialInfo, Formatting.Indented);`r`n            writer.Write(jsonInfo);`r`n            writer.Close();`r`n"
-$jsonBlockLf = "            StreamWriter writer = new StreamWriter(Path.Combine(ExportFolder, ExportName + \".json\"));`n            string jsonInfo = JsonConvert.SerializeObject(materialInfo, Formatting.Indented);`n            writer.Write(jsonInfo);`n            writer.Close();`n"
-if ($PmxText.Contains($jsonBlockCrLf)) {
-    $PmxText = $PmxText.Replace($jsonBlockCrLf, '')
-}
-elseif ($PmxText.Contains($jsonBlockLf)) {
-    $PmxText = $PmxText.Replace($jsonBlockLf, '')
-}
-else {
-    throw 'Expected Newtonsoft JSON output block was not found.'
-}
+$PmxText = [regex]::Replace($PmxText, '(?m)^using Newtonsoft\.Json;\r?\n', '')
+$jsonPattern = '(?ms)^\s*StreamWriter writer = new StreamWriter\(Path\.Combine\(ExportFolder, ExportName \+ "\.json"\)\);\s*string jsonInfo = JsonConvert\.SerializeObject\(materialInfo, Formatting\.Indented\);\s*writer\.Write\(jsonInfo\);\s*writer\.Close\(\);\s*'
+$patchedPmxText = [regex]::Replace($PmxText, $jsonPattern, '')
+if ($patchedPmxText -eq $PmxText) { throw 'Expected Newtonsoft JSON output block was not found.' }
+$PmxText = $patchedPmxText
 [System.IO.File]::WriteAllText($PmxPath, $PmxText, (New-Object System.Text.UTF8Encoding($false)))
 
 $ProjectPath = Join-Path $Src 'COM3D2.ModelExportMMD.csproj'
