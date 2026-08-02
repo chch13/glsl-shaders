@@ -16,9 +16,6 @@ jobs:
       - name: Checkout build harness
         uses: actions/checkout@v4
 
-      - name: Setup NuGet
-        uses: NuGet/setup-nuget@v2
-
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
@@ -29,7 +26,7 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: COM3D2_SYBARIS_MODEL_EXPORT_R1_BUILD
-          path: COM3D2_SYBARIS_MODEL_EXPORT_R1_BUILD.zip
+          name: COM3D2_SYBARIS_MODEL_EXPORT_R2_BUILD
+          path: COM3D2_SYBARIS_MODEL_EXPORT_R2_BUILD.zip
           if-no-files-found: error
           retention-days: 7
