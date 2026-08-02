@@ -6,7 +6,6 @@ $BaseBuild = Join-Path $PSScriptRoot 'Build.ps1'
 $PatchPmxB = Join-Path $PSScriptRoot 'Patch-PmxB.ps1'
 $Work = Join-Path $Root '_work'
 $Src = Join-Path $Work 'src'
-$Deps = Join-Path $Src 'Dependencies'
 $Out = Join-Path $Root '_artifact_r4'
 $R4Bin = Join-Path $Src 'bin\R4'
 $R4Obj = Join-Path $Src 'obj\R4'
@@ -61,40 +60,12 @@ if ((Get-Item -LiteralPath $Built).Length -lt 180000) {
     throw 'R4 built DLL is unexpectedly small.'
 }
 
-$resolve = [ResolveEventHandler] {
-    param($sender,$eventArgs)
-    $simple = (New-Object System.Reflection.AssemblyName($eventArgs.Name)).Name + '.dll'
-    foreach ($folder in @($Deps,$R4Bin)) {
-        $candidate = Join-Path $folder $simple
-        if (Test-Path -LiteralPath $candidate) {
-            return [System.Reflection.Assembly]::ReflectionOnlyLoadFrom($candidate)
-        }
-    }
-    return $null
+$identity = [System.Reflection.AssemblyName]::GetAssemblyName($Built)
+if ($identity.Name -ne 'COM3D2.ModelExportMMD.Plugin') {
+    throw "Unexpected R4 assembly name: $($identity.Name)"
 }
-[AppDomain]::CurrentDomain.add_ReflectionOnlyAssemblyResolve($resolve)
-try {
-    $assembly = [System.Reflection.Assembly]::ReflectionOnlyLoadFrom($Built)
-    $referenceNames = @($assembly.GetReferencedAssemblies() | ForEach-Object { $_.Name })
-    if ($referenceNames -notcontains 'UnityInjector') { throw 'R4 DLL does not reference UnityInjector.' }
-    if ($referenceNames -contains 'BepInEx') { throw 'R4 DLL still references BepInEx.' }
-    if ($referenceNames -contains 'Newtonsoft.Json') { throw 'R4 DLL still references Newtonsoft.Json.' }
-    if ($referenceNames -notcontains 'Assembly-CSharp') { throw 'R4 DLL does not reference Assembly-CSharp.' }
-    if ($referenceNames -notcontains 'UnityEngine') { throw 'R4 DLL does not reference UnityEngine.' }
-
-    $typeNames = @($assembly.GetTypes() | ForEach-Object { $_.FullName })
-    foreach ($requiredType in @(
-        'COM3D2.ModelExportMMD.Plugin.ModelExportPlugin',
-        'COM3D2.ModelExportMMD.PmxExporter',
-        'COM3D2.ModelExportMMD.PmxBuilder'
-    )) {
-        if ($typeNames -notcontains $requiredType) {
-            throw "R4 DLL is missing type: $requiredType"
-        }
-    }
-}
-finally {
-    [AppDomain]::CurrentDomain.remove_ReflectionOnlyAssemblyResolve($resolve)
+if ($identity.Version.ToString() -ne '2.0.0.0') {
+    throw "Unexpected R4 assembly version: $($identity.Version)"
 }
 
 Remove-Item -Recurse -Force $Out -ErrorAction SilentlyContinue
@@ -115,7 +86,8 @@ $manifest = @(
     'NEWTONSOFT_REFERENCE=ABSENT',
     'WINDOWS_BUILD=PASS',
     'SOURCE_GATES=PASS',
-    'ASSEMBLY_REFERENCE_GATES=PASS',
+    'ASSEMBLY_IDENTITY_GATE=PASS',
+    'ACTUAL_DLL_API_AUDIT=PENDING_EXTERNAL_TOOL',
     "SHA256_COM3D2.ModelExportMMD.Plugin.dll=$dllHash"
 )
 $manifest | Set-Content -LiteralPath (Join-Path $Out 'MANIFEST.txt') -Encoding UTF8
@@ -131,6 +103,8 @@ R4 hardens the Japanese MMD B exporter:
 - walks actual transform ancestors for parent assignment
 - updates each vertex deform type after bone remapping
 - fails closed on missing or out-of-range bone mappings
+
+The actual user DLL API audit is performed outside the Windows build process.
 '@ | Set-Content -LiteralPath (Join-Path $Out 'README_BUILD_ONLY.txt') -Encoding UTF8
 
 $ZipPath = Join-Path $Root 'COM3D2_SYBARIS_MODEL_EXPORT_R4_BUILD.zip'
