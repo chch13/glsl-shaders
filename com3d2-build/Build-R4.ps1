@@ -8,6 +8,8 @@ $Work = Join-Path $Root '_work'
 $Src = Join-Path $Work 'src'
 $Deps = Join-Path $Src 'Dependencies'
 $Out = Join-Path $Root '_artifact_r4'
+$R4Bin = Join-Path $Src 'bin\R4'
+$R4Obj = Join-Path $Src 'obj\R4'
 
 & $BaseBuild
 if ($LASTEXITCODE -ne 0) {
@@ -44,13 +46,14 @@ foreach ($marker in $forbiddenMarkers) {
     }
 }
 
-Write-Host 'Rebuilding hardened MMD B exporter...'
-msbuild (Join-Path $Src 'COM3D2.ModelExportMMD.sln') /m /t:Rebuild /p:Configuration=Release /p:Platform="Any CPU" /p:DebugSymbols=false /p:DebugType=None /p:LangVersion=latest /verbosity:minimal
+Remove-Item -Recurse -Force $R4Bin,$R4Obj -ErrorAction SilentlyContinue
+Write-Host 'Rebuilding hardened MMD B exporter into isolated output...'
+msbuild (Join-Path $Src 'COM3D2.ModelExportMMD.sln') /m /t:Rebuild /p:Configuration=Release /p:Platform="Any CPU" /p:OutputPath="bin\R4\" /p:IntermediateOutputPath="obj\R4\" /p:DebugSymbols=false /p:DebugType=None /p:LangVersion=latest /verbosity:minimal
 if ($LASTEXITCODE -ne 0) {
     throw "R4 rebuild failed with exit code $LASTEXITCODE."
 }
 
-$Built = Join-Path $Src 'bin\Release\COM3D2.ModelExportMMD.Plugin.dll'
+$Built = Join-Path $R4Bin 'COM3D2.ModelExportMMD.Plugin.dll'
 if (-not (Test-Path -LiteralPath $Built)) {
     throw 'R4 build output DLL was not produced.'
 }
@@ -61,7 +64,7 @@ if ((Get-Item -LiteralPath $Built).Length -lt 180000) {
 $resolve = [ResolveEventHandler] {
     param($sender,$eventArgs)
     $simple = (New-Object System.Reflection.AssemblyName($eventArgs.Name)).Name + '.dll'
-    foreach ($folder in @($Deps,(Join-Path $Src 'bin\Release'))) {
+    foreach ($folder in @($Deps,$R4Bin)) {
         $candidate = Join-Path $folder $simple
         if (Test-Path -LiteralPath $candidate) {
             return [System.Reflection.Assembly]::ReflectionOnlyLoadFrom($candidate)
