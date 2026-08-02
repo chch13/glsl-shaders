@@ -1,7 +1,6 @@
 using COM3D2.ModelExportMMD.Extensions;
 using COM3D2.ModelExportMMD.Gui;
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
@@ -12,7 +11,7 @@ using UnityInjector.Attributes;
 namespace COM3D2.ModelExportMMD.Plugin
 {
     [PluginName("COM3D2 Model Export to MMD Fixed")]
-    [PluginVersion("3.1-SYB-R1")]
+    [PluginVersion("3.1-SYB-R2")]
     [PluginFilter("COM3D2OHx64")]
     [PluginFilter("COM3D2VRx64")]
     [PluginFilter("COM3D2OHVRx64")]
@@ -71,8 +70,18 @@ namespace COM3D2.ModelExportMMD.Plugin
                 var format = section.GetKey(IniKeyFormat);
                 if (format != null && !string.IsNullOrEmpty(format.RawValue))
                 {
-                    try { window.ExportClass = (ModelExportEventArgs.ExporterClass)Enum.Parse(typeof(ModelExportEventArgs.ExporterClass), format.RawValue, true); }
-                    catch { window.ExportClass = ModelExportEventArgs.ExporterClass.PmxA; }
+                    try
+                    {
+                        window.ExportClass = (ModelExportEventArgs.ExporterClass)Enum.Parse(typeof(ModelExportEventArgs.ExporterClass), format.RawValue, true);
+                        if (window.ExportClass == ModelExportEventArgs.ExporterClass.PmxB)
+                        {
+                            window.ExportClass = ModelExportEventArgs.ExporterClass.PmxA;
+                        }
+                    }
+                    catch
+                    {
+                        window.ExportClass = ModelExportEventArgs.ExporterClass.PmxA;
+                    }
                 }
                 bool value;
                 var savePosition = section.GetKey(IniKeySavePosition);
@@ -107,7 +116,9 @@ namespace COM3D2.ModelExportMMD.Plugin
         {
             var dialog = new SaveFileDialog();
             dialog.Title = "Select the folder where the model and textures will be exported";
-            dialog.Filter = window.ExportClass == ModelExportEventArgs.ExporterClass.Obj ? "Wavefront (*.obj)|*.obj|All files (*.*)|*.*" : "MikuMikuDance (*.pmx)|*.pmx|All files (*.*)|*.*";
+            dialog.Filter = window.ExportClass == ModelExportEventArgs.ExporterClass.Obj
+                ? "Wavefront (*.obj)|*.obj|All files (*.*)|*.*"
+                : "MikuMikuDance (*.pmx)|*.pmx|All files (*.*)|*.*";
             dialog.FileName = window.ExportName;
             dialog.InitialDirectory = window.ExportFolderPath;
             if (!Directory.Exists(dialog.InitialDirectory)) dialog.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
@@ -120,8 +131,14 @@ namespace COM3D2.ModelExportMMD.Plugin
 
         private void ApplyTPose(object sender, EventArgs args)
         {
-            try { GameMain.Instance.CharacterMgr.GetMaid(0).ApplyTPose(); }
-            catch (Exception error) { Debug.LogError("Error applying T-pose: " + error.Message + "\n\nStack trace:\n" + error.StackTrace); }
+            try
+            {
+                GameMain.Instance.CharacterMgr.GetMaid(0).ApplyTPose();
+            }
+            catch (Exception error)
+            {
+                Debug.LogError("Error applying T-pose: " + error.Message + "\n\nStack trace:\n" + error.StackTrace);
+            }
         }
 
         private void ExportModel(object sender, ModelExportEventArgs args)
@@ -129,15 +146,25 @@ namespace COM3D2.ModelExportMMD.Plugin
             try
             {
                 SaveUserPreferences();
-                var meshes = FindObjectsOfType<SkinnedMeshRenderer>().Where(smr => smr.name != "obj1" && smr.name != "moza").Distinct().ToList();
+                var meshes = FindObjectsOfType<SkinnedMeshRenderer>()
+                    .Where(smr => smr.name != "obj1" && smr.name != "moza")
+                    .Distinct()
+                    .ToList();
+
                 IExporter exporter;
                 switch (args.Exporter)
                 {
-                    case ModelExportEventArgs.ExporterClass.Obj: exporter = new ObjExporter(); break;
-                    case ModelExportEventArgs.ExporterClass.PmxA: exporter = new PmxExporter(); break;
-                    case ModelExportEventArgs.ExporterClass.PmxB: exporter = new PmxBuilder(); break;
-                    default: throw new Exception("Unknown model format: " + args.Exporter);
+                    case ModelExportEventArgs.ExporterClass.Obj:
+                        exporter = new ObjExporter();
+                        break;
+                    case ModelExportEventArgs.ExporterClass.PmxA:
+                    case ModelExportEventArgs.ExporterClass.PmxB:
+                        exporter = new PmxExporter();
+                        break;
+                    default:
+                        throw new Exception("Unknown model format: " + args.Exporter);
                 }
+
                 exporter.ExportFolder = args.Folder;
                 exporter.ExportName = args.Name;
                 exporter.SavePosition = args.SavePosition;
