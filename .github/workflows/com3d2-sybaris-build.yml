@@ -26,7 +26,7 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: COM3D2_SYBARIS_MODEL_EXPORT_R2_BUILD
-          path: COM3D2_SYBARIS_MODEL_EXPORT_R2_BUILD.zip
+          name: COM3D2_SYBARIS_MODEL_EXPORT_R3_BUILD
+          path: COM3D2_SYBARIS_MODEL_EXPORT_R3_BUILD.zip
           if-no-files-found: error
           retention-days: 7
