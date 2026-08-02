@@ -11,7 +11,7 @@ using UnityInjector.Attributes;
 namespace COM3D2.ModelExportMMD.Plugin
 {
     [PluginName("COM3D2 Model Export to MMD Fixed")]
-    [PluginVersion("3.1-SYB-R2")]
+    [PluginVersion("3.1-SYB-R3")]
     [PluginFilter("COM3D2OHx64")]
     [PluginFilter("COM3D2VRx64")]
     [PluginFilter("COM3D2OHVRx64")]
@@ -48,7 +48,7 @@ namespace COM3D2.ModelExportMMD.Plugin
                 PluginVersion = ((PluginVersionAttribute)GetType().GetCustomAttributes(typeof(PluginVersionAttribute), false)[0]).Version,
                 ExportFolderPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Maids"),
                 ExportName = "Maid",
-                ExportClass = ModelExportEventArgs.ExporterClass.PmxA,
+                ExportClass = ModelExportEventArgs.ExporterClass.PmxB,
                 SavePostion = true,
                 SaveTextures = true,
             };
@@ -73,14 +73,10 @@ namespace COM3D2.ModelExportMMD.Plugin
                     try
                     {
                         window.ExportClass = (ModelExportEventArgs.ExporterClass)Enum.Parse(typeof(ModelExportEventArgs.ExporterClass), format.RawValue, true);
-                        if (window.ExportClass == ModelExportEventArgs.ExporterClass.PmxB)
-                        {
-                            window.ExportClass = ModelExportEventArgs.ExporterClass.PmxA;
-                        }
                     }
                     catch
                     {
-                        window.ExportClass = ModelExportEventArgs.ExporterClass.PmxA;
+                        window.ExportClass = ModelExportEventArgs.ExporterClass.PmxB;
                     }
                 }
                 bool value;
@@ -158,8 +154,10 @@ namespace COM3D2.ModelExportMMD.Plugin
                         exporter = new ObjExporter();
                         break;
                     case ModelExportEventArgs.ExporterClass.PmxA:
-                    case ModelExportEventArgs.ExporterClass.PmxB:
                         exporter = new PmxExporter();
+                        break;
+                    case ModelExportEventArgs.ExporterClass.PmxB:
+                        exporter = new PmxBuilder();
                         break;
                     default:
                         throw new Exception("Unknown model format: " + args.Exporter);
