@@ -1,0 +1,35 @@
+name: COM3D2 Sybaris PMX Build
+
+on:
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - name: Checkout build harness
+        uses: actions/checkout@v4
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build and validate Sybaris DLL
+        shell: powershell
+        run: .\com3d2-build\Build.ps1
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: COM3D2_SYBARIS_MODEL_EXPORT_R1_BUILD
+          path: COM3D2_SYBARIS_MODEL_EXPORT_R1_BUILD.zip
+          if-no-files-found: error
+          retention-days: 7
