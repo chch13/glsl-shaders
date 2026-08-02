@@ -19,15 +19,15 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Build and validate Sybaris DLL
+      - name: Build and validate hardened Sybaris DLL
         shell: powershell
-        run: .\com3d2-build\Build.ps1
+        run: .\com3d2-build\Build-R4.ps1
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: COM3D2_SYBARIS_MODEL_EXPORT_R3_BUILD
-          path: COM3D2_SYBARIS_MODEL_EXPORT_R3_BUILD.zip
+          name: COM3D2_SYBARIS_MODEL_EXPORT_R4_BUILD
+          path: COM3D2_SYBARIS_MODEL_EXPORT_R4_BUILD.zip
           if-no-files-found: error
           retention-days: 7
 
