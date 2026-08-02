@@ -30,3 +30,42 @@ jobs:
           path: COM3D2_SYBARIS_MODEL_EXPORT_R3_BUILD.zip
           if-no-files-found: error
           retention-days: 7
+
+  audit-tool:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout audit source
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish self-contained Linux auditor
+        run: >-
+          dotnet publish com3d2-audit/Com3d2MetadataAudit.csproj
+          -c Release
+          -r linux-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:DebugType=None
+          -p:DebugSymbols=false
+          -o audit-publish
+
+      - name: Smoke-test command line
+        run: |
+          set +e
+          ./audit-publish/Com3d2MetadataAudit
+          code=$?
+          set -e
+          test "$code" -eq 2
+
+      - name: Upload metadata auditor
+        uses: actions/upload-artifact@v4
+        with:
+          name: COM3D2_METADATA_AUDIT_LINUX_X64
+          path: audit-publish/Com3d2MetadataAudit
+          if-no-files-found: error
+          retention-days: 7
