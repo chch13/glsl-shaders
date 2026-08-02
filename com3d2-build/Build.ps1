@@ -9,7 +9,7 @@ New-Item -ItemType Directory -Force -Path $Work,$Out | Out-Null
 
 $MaintainedCommit = 'b3ba70ceab633fa152be57dd2b6a1746d934b9bb'
 $LegacyTag = 'v2.0.0.0'
-$PackRevision = 'R2'
+$PackRevision = 'R3'
 
 Write-Host 'Cloning maintained exporter source...'
 git clone --quiet https://github.com/rintrint/COM3D2.ModelExportMMD.git (Join-Path $Work 'src')
@@ -33,15 +33,27 @@ foreach ($name in @('Assembly-CSharp.dll','UnityEngine.dll','ExIni.dll','UnityIn
 
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'SybarisModelExportPlugin.cs') -Destination (Join-Path $Src 'COM3D2.ModelExportMMD.Plugin\ModelExportPlugin.cs') -Force
 
-# The optional material JSON sidecar is removed so the package remains one DLL.
-$PmxPath = Join-Path $Src 'COM3D2.ModelExportMMD\PmxExporter.cs'
-$PmxText = Get-Content -LiteralPath $PmxPath -Raw
-$PmxText = [regex]::Replace($PmxText, '(?m)^using Newtonsoft\.Json;\r?\n', '')
-$jsonPattern = '(?ms)^\s*StreamWriter writer = new StreamWriter\(Path\.Combine\(ExportFolder, ExportName \+ "\.json"\)\);\s*string jsonInfo = JsonConvert\.SerializeObject\(materialInfo, Formatting\.Indented\);\s*writer\.Write\(jsonInfo\);\s*writer\.Close\(\);\s*'
-$patchedPmxText = [regex]::Replace($PmxText, $jsonPattern, '')
-if ($patchedPmxText -eq $PmxText) { throw 'Expected Newtonsoft JSON output block was not found.' }
-$PmxText = $patchedPmxText
-[System.IO.File]::WriteAllText($PmxPath, $PmxText, (New-Object System.Text.UTF8Encoding($false)))
+function Remove-JsonSidecar([string]$Path) {
+    $text = Get-Content -LiteralPath $Path -Raw
+    $text = [regex]::Replace($text, '(?m)^using Newtonsoft\.Json;\r?\n', '')
+    $pattern = '(?ms)^\s*StreamWriter writer = new StreamWriter\(Path\.Combine\(ExportFolder, ExportName \+ "\.json"\)\);\s*string jsonInfo = JsonConvert\.SerializeObject\(materialInfo, Formatting\.Indented\);\s*writer\.Write\(jsonInfo\);\s*writer\.Close\(\);\s*'
+    $patched = [regex]::Replace($text, $pattern, '')
+    if ($patched -eq $text) { throw "Expected Newtonsoft JSON output block was not found in $Path" }
+    [System.IO.File]::WriteAllText($Path, $patched, (New-Object System.Text.UTF8Encoding($false)))
+}
+
+$PmxAPath = Join-Path $Src 'COM3D2.ModelExportMMD\PmxExporter.cs'
+$PmxBPath = Join-Path $Src 'COM3D2.ModelExportMMD\PmxBuilder.cs'
+Remove-JsonSidecar $PmxAPath
+Remove-JsonSidecar $PmxBPath
+
+# Correct an obvious decompilation typo in MMD B model metadata.
+$pmxBText = Get-Content -LiteralPath $PmxBPath -Raw
+$metadataPattern = 'pmxModelInfo\.Comment\s*=\s*"我的妹抖";\s*pmxModelInfo\.Comment\s*=\s*"my maid";'
+$metadataReplacement = 'pmxModelInfo.Comment = "我的妹抖";' + [Environment]::NewLine + '            pmxModelInfo.CommentE = "my maid";'
+$patchedPmxBText = [regex]::Replace($pmxBText, $metadataPattern, $metadataReplacement, 1)
+if ($patchedPmxBText -eq $pmxBText) { throw 'MMD B metadata correction gate failed.' }
+[System.IO.File]::WriteAllText($PmxBPath, $patchedPmxBText, (New-Object System.Text.UTF8Encoding($false)))
 
 $ProjectPath = Join-Path $Src 'COM3D2.ModelExportMMD.csproj'
 [xml]$project = Get-Content -LiteralPath $ProjectPath
@@ -51,11 +63,6 @@ $ns.AddNamespace('m','http://schemas.microsoft.com/developer/msbuild/2003')
 foreach ($ref in @($project.SelectNodes('//m:Reference',$ns))) {
     if ($ref.Include -like 'BepInEx*' -or $ref.Include -like 'Newtonsoft.Json*') {
         [void]$ref.ParentNode.RemoveChild($ref)
-    }
-}
-foreach ($compile in @($project.SelectNodes('//m:Compile',$ns))) {
-    if ($compile.Include -eq 'COM3D2.ModelExportMMD\PmxBuilder.cs') {
-        [void]$compile.ParentNode.RemoveChild($compile)
     }
 }
 
@@ -77,30 +84,50 @@ Add-Reference 'ExIni' 'Dependencies\ExIni.dll'
 Add-Reference 'UnityInjector' 'Dependencies\UnityInjector.dll'
 $project.Save($ProjectPath)
 
-$PmxSource = Get-Content -LiteralPath $PmxPath -Raw
-$requiredSourceMarkers = @(
+$PmxASource = Get-Content -LiteralPath $PmxAPath -Raw
+$pmxAMarkers = @(
     'for (Transform bone = skinnedMesh.bones[i]; bone != null; bone = bone.parent)',
     'pmxVertex.UpdateDeformType()',
     'pmxBone.To_Offset',
     'if (!vertexIndexMap.ContainsKey(parentName))'
 )
-foreach ($marker in $requiredSourceMarkers) {
-    if (-not $PmxSource.Contains($marker)) { throw "Maintained source gate failed: $marker" }
+foreach ($marker in $pmxAMarkers) {
+    if (-not $PmxASource.Contains($marker)) { throw "MMD A source gate failed: $marker" }
 }
-if ($PmxSource.Contains('JsonConvert') -or $PmxSource.Contains('Newtonsoft.Json')) { throw 'JSON dependency removal gate failed.' }
+
+$PmxBSource = Get-Content -LiteralPath $PmxBPath -Raw
+$pmxBMarkers = @(
+    'SetBoneParents();',
+    'BoneParentSort();',
+    'ChangeBoneNames();',
+    'AddBone();',
+    'ChangeBoneInfo();',
+    'AddPhysics();',
+    '左足ＩＫ',
+    '右足ＩＫ',
+    'pmxModelInfo.CommentE = "my maid";'
+)
+foreach ($marker in $pmxBMarkers) {
+    if (-not $PmxBSource.Contains($marker)) { throw "MMD B source gate failed: $marker" }
+}
+
+foreach ($sourceText in @($PmxASource,$PmxBSource)) {
+    if ($sourceText.Contains('JsonConvert') -or $sourceText.Contains('Newtonsoft.Json')) { throw 'JSON dependency removal gate failed.' }
+}
 
 $PluginSource = Get-Content -LiteralPath (Join-Path $Src 'COM3D2.ModelExportMMD.Plugin\ModelExportPlugin.cs') -Raw
 if ($PluginSource.Contains('BepInEx')) { throw 'Sybaris plugin source still contains BepInEx.' }
-if ($PluginSource.Contains('new PmxBuilder')) { throw 'Legacy PMX builder is still reachable.' }
 if (-not $PluginSource.Contains('public class ModelExportPlugin : PluginBase')) { throw 'PluginBase inheritance gate failed.' }
 if (-not $PluginSource.Contains('[PluginFilter("COM3D2x64")]')) { throw 'COM3D2x64 filter gate failed.' }
+if (-not $PluginSource.Contains('ExportClass = ModelExportEventArgs.ExporterClass.PmxB')) { throw 'MMD B default gate failed.' }
+if (-not $PluginSource.Contains('exporter = new PmxBuilder();')) { throw 'MMD B routing gate failed.' }
 
 Write-Host 'Building against COM3D2/Sybaris v2 dependency baseline...'
 msbuild (Join-Path $Src 'COM3D2.ModelExportMMD.sln') /m /t:Rebuild /p:Configuration=Release /p:Platform="Any CPU" /p:DebugSymbols=false /p:DebugType=None /p:LangVersion=latest /verbosity:minimal
 
 $Built = Join-Path $Src 'bin\Release\COM3D2.ModelExportMMD.Plugin.dll'
 if (-not (Test-Path -LiteralPath $Built)) { throw 'Build output DLL was not produced.' }
-if ((Get-Item -LiteralPath $Built).Length -lt 100000) { throw 'Built DLL is unexpectedly small.' }
+if ((Get-Item -LiteralPath $Built).Length -lt 180000) { throw 'Built DLL is unexpectedly small.' }
 
 $resolve = [ResolveEventHandler] {
     param($sender,$eventArgs)
@@ -122,6 +149,15 @@ try {
     if ($referenceNames -contains 'Newtonsoft.Json') { throw 'Built DLL still references Newtonsoft.Json.' }
     if ($referenceNames -notcontains 'Assembly-CSharp') { throw 'Built DLL does not reference Assembly-CSharp.' }
     if ($referenceNames -notcontains 'UnityEngine') { throw 'Built DLL does not reference UnityEngine.' }
+
+    $typeNames = @($assembly.GetTypes() | ForEach-Object { $_.FullName })
+    foreach ($requiredType in @(
+        'COM3D2.ModelExportMMD.Plugin.ModelExportPlugin',
+        'COM3D2.ModelExportMMD.PmxExporter',
+        'COM3D2.ModelExportMMD.PmxBuilder'
+    )) {
+        if ($typeNames -notcontains $requiredType) { throw "Built DLL is missing type: $requiredType" }
+    }
 }
 finally {
     [AppDomain]::CurrentDomain.remove_ReflectionOnlyAssemblyResolve($resolve)
@@ -134,9 +170,12 @@ $manifest = @(
     "MAINTAINED_COMMIT=$MaintainedCommit",
     "SYBARIS_BASELINE=$LegacyTag",
     'TARGET_LOADER=Sybaris/UnityInjector',
+    'DEFAULT_EXPORTER=MMD_B_JAPANESE',
+    'MMD_A=ENGLISH_BONE_NAMES',
+    'MMD_B=JAPANESE_STANDARD_BONES_AND_IK',
     'BEPINEX_REFERENCE=ABSENT',
     'NEWTONSOFT_REFERENCE=ABSENT',
-    'LEGACY_PMX_BUILDER=DISABLED',
+    'MMD_B_EXPORTER=ENABLED',
     'BUILD=PASS',
     'SOURCE_GATES=PASS',
     'ASSEMBLY_REFERENCE_GATES=PASS'
@@ -148,16 +187,15 @@ foreach ($file in Get-ChildItem -LiteralPath $Out -File) {
 $manifest | Set-Content -LiteralPath (Join-Path $Out 'MANIFEST.txt') -Encoding UTF8
 
 @'
-COM3D2 Sybaris ModelExportMMD R2
+COM3D2 Sybaris ModelExportMMD R3
 
 BUILD-ONLY artifact. Do not install until promoted after validation.
 Target loader: Sybaris / UnityInjector
-Maintained exporter commit: b3ba70ceab633fa152be57dd2b6a1746d934b9bb
-Sybaris compatibility baseline: official v2.0.0.0 dependencies
-External JSON dependency: removed
-Legacy PMX B exporter: disabled; PMX A core is used for both PMX menu values
+Default format: MMD B, Japanese standard bone names and IK
+MMD A remains available for English/raw armature export.
+External JSON dependency: removed.
 '@ | Set-Content -LiteralPath (Join-Path $Out 'README_BUILD_ONLY.txt') -Encoding UTF8
 
-$ZipPath = Join-Path $Root 'COM3D2_SYBARIS_MODEL_EXPORT_R2_BUILD.zip'
+$ZipPath = Join-Path $Root 'COM3D2_SYBARIS_MODEL_EXPORT_R3_BUILD.zip'
 Compress-Archive -Path (Join-Path $Out '*') -DestinationPath $ZipPath -Force
 Write-Host 'BUILD_PIPELINE=PASS'
