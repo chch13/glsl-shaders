@@ -11,7 +11,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Isolate exact R3_R5 Unicode shortcut failure stage
+      - name: Test ASCII H compile temp for exact R3_R5 Unicode shortcut component
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
@@ -30,27 +30,35 @@ jobs:
             $root=Get-ChildItem -LiteralPath $stage -Filter Common-JohnGateR3.ps1 -Recurse -File|Select-Object -First 1
             if($null -eq $root){throw 'COMMON_NOT_FOUND'}
             . $root.FullName
-            Write-Output 'DIAG_COMMON_DOTSOURCE_PASS'
             Ensure-HRoot
-            Write-Output ('DIAG_ENSURE_HROOT_PASS temp='+$env:TEMP)
-            Write-Output 'DIAG_BEFORE_INTEROP'
-            Ensure-ShellLinkInterop
-            Write-Output 'DIAG_INTEROP_PASS'
+            Write-Output ('DIAG_ORIGINAL_TEMP='+$env:TEMP)
+            $oldTemp=$env:TEMP;$oldTmp=$env:TMP
+            $compileTemp='H:\JG_INTEROP_TMP'
+            if(Test-Path -LiteralPath $compileTemp){Remove-Item -LiteralPath $compileTemp -Recurse -Force}
+            New-Item -ItemType Directory -Path $compileTemp -Force|Out-Null
+            try {
+              $env:TEMP=$compileTemp;$env:TMP=$compileTemp
+              Write-Output ('DIAG_ASCII_COMPILE_TEMP='+$env:TEMP)
+              Ensure-ShellLinkInterop
+              Write-Output 'DIAG_INTEROP_PASS_WITH_ASCII_H_TEMP'
+            }
+            finally {
+              $env:TEMP=$oldTemp;$env:TMP=$oldTmp
+              if(Test-Path -LiteralPath $compileTemp){Remove-Item -LiteralPath $compileTemp -Recurse -Force}
+            }
             $shortcutRoot=U 'SDpc44K444On44Oz5Luu5oOz44Oe44K344OzXOOCuOODp+ODs+ODgOOCpuODs+ODreODvOODieeuoeeQhuWgtFzplbfjgYQg44OR44K577yI6Kmm6aiT77yJXEpvaG5HYXRlIFIzIOaXpeacrOiqniBzaG9ydGN1dCBmaXh0dXJl'
             New-Item -ItemType Directory -Path $shortcutRoot -Force|Out-Null
             $runBat=Join-Path $shortcutRoot 'RUN.bat'
             $runText='@echo off'+"`r`n"+'echo OK>ran.txt'+"`r`n"+'exit /b 0'+"`r`n"
             [IO.File]::WriteAllText($runBat,$runText,[Text.Encoding]::ASCII)
             $runLink=Join-Path $shortcutRoot (U '6LW35YuV77yI6Kmm6aiT77yJLmxuaw==')
-            Write-Output ('DIAG_BEFORE_CREATE bat='+$runBat+' link='+$runLink)
             New-UnicodeShortcut -LinkPath $runLink -TargetPath $runBat -WorkingDirectory $shortcutRoot
             Write-Output 'DIAG_CREATE_READBACK_PASS'
-            Write-Output 'DIAG_BEFORE_START_PROCESS'
             Start-Process -FilePath $runLink -Wait
             Write-Output 'DIAG_START_PROCESS_RETURNED'
             $sentinel=Join-Path $shortcutRoot 'ran.txt'
             if(-not(Test-Path -LiteralPath $sentinel)){throw 'DIAG_SENTINEL_MISSING'}
             if((Get-Content -LiteralPath $sentinel -Raw).Trim() -ne 'OK'){throw 'DIAG_SENTINEL_BAD'}
-            Write-Output 'R3_R5_SHORTCUT_COMPONENT_DIAGNOSTIC_PASS'
+            Write-Output 'R3_R5_ASCII_H_COMPILE_TEMP_HYPOTHESIS_PASS'
           }
           finally { subst H: /d | Out-Null }
