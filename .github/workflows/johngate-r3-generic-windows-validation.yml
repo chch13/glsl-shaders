@@ -59,7 +59,8 @@ jobs:
             if(-not $ok){ throw 'RSA_SIGN_VERIFY_FAIL' }
 
             $bat=Join-Path $root 'START.bat'
-            [IO.File]::WriteAllText($bat,"@echo off`r`npowershell.exe -NoProfile -Command \"exit 0\"`r`n",[Text.Encoding]::ASCII)
+            $batText='@echo off'+"`r`n"+'powershell.exe -NoProfile -Command "exit 0"'+"`r`n"
+            [IO.File]::WriteAllText($bat,$batText,[Text.Encoding]::ASCII)
             & cmd.exe /d /c ('"'+$bat+'"')
             if($LASTEXITCODE -ne 0){ throw 'BAT_POWERSHELL_ENTRY_FAIL' }
 
