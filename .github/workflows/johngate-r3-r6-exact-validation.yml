@@ -1,0 +1,130 @@
+name: JohnGate R3_R6 Exact Windows Validation
+on:
+  push:
+    paths:
+      - '.github/workflows/johngate-r3-r6-exact-validation.yml'
+      - 'validation/r3r6-part-00.txt'
+      - 'validation/r3r6-part-01.txt'
+      - 'validation/r3r6-part-02.txt'
+      - 'validation/r3r6-part-03.txt'
+      - 'validation/r3r6-part-04.txt'
+      - 'validation/r3r6-part-05.txt'
+      - 'validation/r3r6-part-06.txt'
+      - 'validation/r3r6-part-07.txt'
+      - 'validation/r3r6-part-08.txt'
+      - 'validation/r3r6-part-09.txt'
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct exact R3_R6 package and validate fresh plus upgrade
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          function U([string]$b){[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b))}
+          $parts=0..9|ForEach-Object{'.\validation\r3r6-part-{0:D2}.txt' -f $_}
+          $expected=@(3000,3000,3000,3000,3000,3000,3000,3000,3000,2504)
+          for($i=0;$i -lt $parts.Count;$i++){
+            $x=[IO.File]::ReadAllText($parts[$i])
+            if($x.Length -ne $expected[$i]){throw ('CHUNK_LENGTH_FAIL index='+$i+' expected='+$expected[$i]+' actual='+$x.Length)}
+          }
+          $b64=($parts|ForEach-Object{[IO.File]::ReadAllText($_)}) -join ''
+          if($b64.Length -ne 29504){throw ('TOTAL_BASE64_LENGTH_FAIL '+$b64.Length)}
+          $zip=Join-Path $env:RUNNER_TEMP 'JOHN_GATE_R3_R6_CANDIDATE.zip'
+          [IO.File]::WriteAllBytes($zip,[Convert]::FromBase64String($b64))
+          $bytes=(Get-Item -LiteralPath $zip).Length
+          if($bytes -ne 22128){throw ('ZIP_BYTES_FAIL '+$bytes)}
+          $sha=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($sha -ne '4d2f7c52e764e92b28a20b9874d66cac995b2c8893ad00324ea1f0aa861ebc95'){throw ('ZIP_SHA_FAIL '+$sha)}
+          Write-Output ('ZIP_IDENTITY_PASS bytes='+$bytes+' sha='+$sha)
+
+          if(Test-Path -LiteralPath 'H:\'){throw 'H_ALREADY_PRESENT_ON_HOSTED_RUNNER'}
+          $hbase=Join-Path $env:RUNNER_TEMP 'JG_R3_R6_H'
+          New-Item -ItemType Directory -Path $hbase -Force|Out-Null
+          subst H: $hbase
+          try {
+            $stage=Join-Path $env:RUNNER_TEMP (U 'Sm9obkdhdGUg5pel5pys6KqeIChleGFjdCBmaXh0dXJlKVzplbfjgYQg44OR44K5XHBhY2thZ2U=')
+            New-Item -ItemType Directory -Path $stage -Force|Out-Null
+            Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force
+            $entry=Get-ChildItem -LiteralPath $stage -Filter INSTALL_TO_H.bat -Recurse -File|Select-Object -First 1
+            if($null -eq $entry){throw 'INSTALL_ENTRY_NOT_FOUND'}
+
+            $top=U 'SDpc44K444On44Oz5Luu5oOz44Oe44K344Oz'
+            $program=Join-Path $top 'JohnGate'
+            $download=U 'SDpc44K444On44Oz5Luu5oOz44Oe44K344OzXOOCuOODp+ODs+ODgOOCpuODs+ODreODvOODieeuoeeQhuWgtA=='
+            $rollback=Join-Path $download 'JohnGate_PreR3_Rollback'
+            $defs=@(@('JOHN_GATE.lnk','START.bat'),@('JOHN_GATE_FIRST_SETUP.lnk','FIRST_SETUP.bat'),@('JOHN_GATE_SELFTEST.lnk','SELFTEST.bat'))
+            if(Test-Path -LiteralPath $program){throw 'FRESH_PRECONDITION_PROGRAM_EXISTS'}
+
+            & cmd.exe /d /c ('call "'+$entry.FullName+'"')
+            if($LASTEXITCODE -ne 0){throw ('FRESH_INSTALL_EXIT='+$LASTEXITCODE)}
+            $receiptPath=Join-Path $program '_Output\INSTALL_RECEIPT.json'
+            $selfPath=Join-Path $program '_Output\SELFTEST_RECEIPT.json'
+            if(-not(Test-Path -LiteralPath $receiptPath)){throw 'FRESH_INSTALL_RECEIPT_MISSING'}
+            if(-not(Test-Path -LiteralPath $selfPath)){throw 'FRESH_SELFTEST_RECEIPT_MISSING'}
+            $r=Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8|ConvertFrom-Json
+            $s=Get-Content -LiteralPath $selfPath -Raw -Encoding UTF8|ConvertFrom-Json
+            if([string]$r.revision -ne 'JOHN_GATE_R3_R6'){throw ('FRESH_REVISION_FAIL '+[string]$r.revision)}
+            if([string]$r.evidence -ne 'FIXTURE_BEHAVIOR_PASS_CORE_OFFLINE'){throw ('FRESH_EVIDENCE_FAIL '+[string]$r.evidence)}
+            if([string]$r.shortcut_backend -ne 'IShellLinkW_IPersistFile'){throw 'FRESH_SHORTCUT_BACKEND_FAIL'}
+            if([bool]$r.rollback_contains_previous_program){throw 'FRESH_FALSE_OLD_DETECTION'}
+            if([string]$s.result -ne 'PASS' -or [int]$s.failed -ne 0 -or [int]$s.passed -le 0){throw 'FRESH_SELFTEST_FAIL'}
+            if([string]$s.shortcut_backend -ne 'IShellLinkW_IPersistFile'){throw 'FRESH_SELFTEST_SHORTCUT_BACKEND_FAIL'}
+            if(Test-Path -LiteralPath (Join-Path $rollback 'Program')){throw 'FRESH_ROLLBACK_PROGRAM_SHOULD_NOT_EXIST'}
+
+            . (Join-Path $program 'Common-JohnGateR3.ps1')
+            Ensure-ShellLinkInterop
+            foreach($d in $defs){
+              $lnk=Join-Path $top $d[0]
+              if(-not(Test-Path -LiteralPath $lnk)){throw ('FRESH_LINK_MISSING '+$d[0])}
+              $target=[JohnShellLink.Link]::ReadTarget($lnk)
+              $wd=[JohnShellLink.Link]::ReadWorkingDir($lnk)
+              if($target -cne (Join-Path $program $d[1])){throw ('FRESH_LINK_TARGET_FAIL '+$d[0]+' actual='+$target)}
+              if($wd -cne $program){throw ('FRESH_LINK_WD_FAIL '+$d[0]+' actual='+$wd)}
+            }
+            $ownedFresh=@(Get-ChildItem -LiteralPath 'H:\' -Directory -Filter 'JGIT_*' -ErrorAction SilentlyContinue)
+            if($ownedFresh.Count -ne 0){throw ('FRESH_INTEROP_TEMP_REMAINS count='+$ownedFresh.Count)}
+            if(Test-Path -LiteralPath (Join-Path $download 'JohnGateR3InstallTemp')){throw 'FRESH_TEMP_REMAINS'}
+            if(Test-Path -LiteralPath (Join-Path $download 'JohnGateR3Candidate')){throw 'FRESH_CANDIDATE_REMAINS'}
+            Write-Output ('FRESH_INSTALL_PASS selftest='+[int]$s.passed)
+
+            $sentinel=Join-Path $program 'UPGRADE_SENTINEL.txt'
+            [IO.File]::WriteAllText($sentinel,'PREVIOUS_PROGRAM',[Text.Encoding]::ASCII)
+            $before=@{}
+            foreach($d in $defs){$lnk=Join-Path $top $d[0];$before[$d[0]]=(Get-FileHash -LiteralPath $lnk -Algorithm SHA256).Hash.ToLowerInvariant()}
+
+            & cmd.exe /d /c ('call "'+$entry.FullName+'"')
+            if($LASTEXITCODE -ne 0){throw ('UPGRADE_INSTALL_EXIT='+$LASTEXITCODE)}
+            $r2=Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8|ConvertFrom-Json
+            $s2=Get-Content -LiteralPath $selfPath -Raw -Encoding UTF8|ConvertFrom-Json
+            if([string]$r2.revision -ne 'JOHN_GATE_R3_R6'){throw 'UPGRADE_REVISION_FAIL'}
+            if(-not [bool]$r2.rollback_contains_previous_program){throw 'UPGRADE_OLD_DETECTION_FAIL'}
+            if([string]$r2.shortcut_backend -ne 'IShellLinkW_IPersistFile'){throw 'UPGRADE_SHORTCUT_BACKEND_FAIL'}
+            if([string]$s2.result -ne 'PASS' -or [int]$s2.failed -ne 0 -or [int]$s2.passed -le 0){throw 'UPGRADE_SELFTEST_FAIL'}
+            $rbProgram=Join-Path $rollback 'Program'
+            $rbLinks=Join-Path $rollback 'Links'
+            if(-not(Test-Path -LiteralPath (Join-Path $rbProgram 'UPGRADE_SENTINEL.txt'))){throw 'UPGRADE_ROLLBACK_SENTINEL_MISSING'}
+            if(Test-Path -LiteralPath $sentinel){throw 'UPGRADE_ACTIVE_SENTINEL_REMAINS'}
+            foreach($d in $defs){
+              $saved=Join-Path $rbLinks $d[0]
+              if(-not(Test-Path -LiteralPath $saved)){throw ('UPGRADE_ROLLBACK_LINK_MISSING '+$d[0])}
+              $savedSha=(Get-FileHash -LiteralPath $saved -Algorithm SHA256).Hash.ToLowerInvariant()
+              if($savedSha -ne $before[$d[0]]){throw ('UPGRADE_ROLLBACK_LINK_SHA_FAIL '+$d[0])}
+              $lnk=Join-Path $top $d[0]
+              $target=[JohnShellLink.Link]::ReadTarget($lnk)
+              $wd=[JohnShellLink.Link]::ReadWorkingDir($lnk)
+              if($target -cne (Join-Path $program $d[1])){throw ('UPGRADE_ACTIVE_LINK_TARGET_FAIL '+$d[0])}
+              if($wd -cne $program){throw ('UPGRADE_ACTIVE_LINK_WD_FAIL '+$d[0])}
+            }
+            $ownedUpgrade=@(Get-ChildItem -LiteralPath 'H:\' -Directory -Filter 'JGIT_*' -ErrorAction SilentlyContinue)
+            if($ownedUpgrade.Count -ne 0){throw ('UPGRADE_INTEROP_TEMP_REMAINS count='+$ownedUpgrade.Count)}
+            if(Test-Path -LiteralPath (Join-Path $download 'JohnGateR3InstallTemp')){throw 'UPGRADE_TEMP_REMAINS'}
+            if(Test-Path -LiteralPath (Join-Path $download 'JohnGateR3Candidate')){throw 'UPGRADE_CANDIDATE_REMAINS'}
+            Write-Output ('UPGRADE_INSTALL_PASS selftest='+[int]$s2.passed)
+            Write-Output 'R3_R6_EXACT_WINDOWS_FIXTURE_PASS'
+          }
+          finally { subst H: /d | Out-Null }
