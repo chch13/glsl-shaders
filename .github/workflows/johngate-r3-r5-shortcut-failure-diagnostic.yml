@@ -1,0 +1,56 @@
+name: JohnGate R3_R5 Shortcut Failure Diagnostic
+on:
+  push:
+    paths:
+      - '.github/workflows/johngate-r3-r5-shortcut-failure-diagnostic.yml'
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Isolate exact R3_R5 Unicode shortcut failure stage
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          function U([string]$b){[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b))}
+          $parts=0..9|ForEach-Object{'.\validation\r3r5-part-{0:D2}.txt' -f $_}
+          $b64=($parts|ForEach-Object{[IO.File]::ReadAllText($_)}) -join ''
+          $zip=Join-Path $env:RUNNER_TEMP 'R3_R5_EXACT.zip'
+          [IO.File]::WriteAllBytes($zip,[Convert]::FromBase64String($b64))
+          $sha=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($sha -ne '347fab574d318783c625ba40022995c33747c4ecb76ad4ebc5e82d0f93ad8cc4'){throw ('ZIP_SHA_FAIL '+$sha)}
+          Write-Output 'DIAG_ZIP_IDENTITY_PASS'
+          if(Test-Path -LiteralPath 'H:\'){throw 'H_ALREADY_PRESENT'}
+          $hbase=Join-Path $env:RUNNER_TEMP 'JG_DIAG_H';New-Item -ItemType Directory -Path $hbase -Force|Out-Null;subst H: $hbase
+          try {
+            $stage=Join-Path $env:RUNNER_TEMP 'R3_R5_DIAG_EXTRACT';Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force
+            $root=Get-ChildItem -LiteralPath $stage -Filter Common-JohnGateR3.ps1 -Recurse -File|Select-Object -First 1
+            if($null -eq $root){throw 'COMMON_NOT_FOUND'}
+            . $root.FullName
+            Write-Output 'DIAG_COMMON_DOTSOURCE_PASS'
+            Ensure-HRoot
+            Write-Output ('DIAG_ENSURE_HROOT_PASS temp='+$env:TEMP)
+            Write-Output 'DIAG_BEFORE_INTEROP'
+            Ensure-ShellLinkInterop
+            Write-Output 'DIAG_INTEROP_PASS'
+            $shortcutRoot=U 'SDpc44K444On44Oz5Luu5oOz44Oe44K344OzXOOCuOODp+ODs+ODgOOCpuODs+ODreODvOODieeuoeeQhuWgtFzplbfjgYQg44OR44K577yI6Kmm6aiT77yJXEpvaG5HYXRlIFIzIOaXpeacrOiqniBzaG9ydGN1dCBmaXh0dXJl'
+            New-Item -ItemType Directory -Path $shortcutRoot -Force|Out-Null
+            $runBat=Join-Path $shortcutRoot 'RUN.bat'
+            $runText='@echo off'+"`r`n"+'echo OK>ran.txt'+"`r`n"+'exit /b 0'+"`r`n"
+            [IO.File]::WriteAllText($runBat,$runText,[Text.Encoding]::ASCII)
+            $runLink=Join-Path $shortcutRoot (U '6LW35YuV77yI6Kmm6aiT77yJLmxuaw==')
+            Write-Output ('DIAG_BEFORE_CREATE bat='+$runBat+' link='+$runLink)
+            New-UnicodeShortcut -LinkPath $runLink -TargetPath $runBat -WorkingDirectory $shortcutRoot
+            Write-Output 'DIAG_CREATE_READBACK_PASS'
+            Write-Output 'DIAG_BEFORE_START_PROCESS'
+            Start-Process -FilePath $runLink -Wait
+            Write-Output 'DIAG_START_PROCESS_RETURNED'
+            $sentinel=Join-Path $shortcutRoot 'ran.txt'
+            if(-not(Test-Path -LiteralPath $sentinel)){throw 'DIAG_SENTINEL_MISSING'}
+            if((Get-Content -LiteralPath $sentinel -Raw).Trim() -ne 'OK'){throw 'DIAG_SENTINEL_BAD'}
+            Write-Output 'R3_R5_SHORTCUT_COMPONENT_DIAGNOSTIC_PASS'
+          }
+          finally { subst H: /d | Out-Null }
