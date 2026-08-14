@@ -15,6 +15,7 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
+          function U([string]$b){[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b))}
           $parts=@('.\validation\johngate-r3-sanitized-part0.txt','.\validation\johngate-r3-sanitized-part1.txt')
           $b64=($parts|ForEach-Object{Get-Content -LiteralPath $_ -Raw}).Trim()
           $zip=Join-Path $env:RUNNER_TEMP 'JOHN_GATE_R3_SANITIZED_WINTEST.zip'
@@ -26,14 +27,16 @@ jobs:
           New-Item -ItemType Directory -Path $hbase -Force|Out-Null
           subst H: $hbase
           try {
-            $stage='H:\JG Test\仮想マシン\ジョンダウンロード管理場\長い パス（試験）\package'
+            $stage=U 'SDpcSkcgVGVzdFzku67mg7Pjg57jgrfjg7Nc44K444On44Oz44OA44Km44Oz44Ot44O844OJ566h55CG5aC0XOmVt+OBhCDjg5HjgrnvvIjoqabpqJPvvIlccGFja2FnZQ=='
+            $top=U 'SDpcSkcgVGVzdFzku67mg7Pjg57jgrfjg7M='
+            $program=U 'SDpcSkcgVGVzdFzku67mg7Pjg57jgrfjg7NcSm9obkdhdGU='
+            $download=U 'SDpcSkcgVGVzdFzku67mg7Pjg57jgrfjg7Nc44K444On44Oz44OA44Km44Oz44Ot44O844OJ566h55CG5aC0'
             New-Item -ItemType Directory -Path $stage -Force|Out-Null
             Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force
             $entry=Get-ChildItem -LiteralPath $stage -Filter INSTALL_TO_H.bat -Recurse -File|Select-Object -First 1
             if($null -eq $entry){throw 'INSTALL_ENTRY_NOT_FOUND'}
 
-            $top='H:\JG Test\仮想マシン'
-            $old=Join-Path $top 'JohnGate'
+            $old=$program
             New-Item -ItemType Directory -Path $old -Force|Out-Null
             'OLD_INSTALL_SENTINEL'|Set-Content -LiteralPath (Join-Path $old 'OLD_SENTINEL.txt') -Encoding ASCII
             '@echo off'|Set-Content -LiteralPath (Join-Path $old 'START.bat') -Encoding ASCII
@@ -47,7 +50,6 @@ jobs:
             & cmd.exe /d /c ('call "'+$entry.FullName+'"')
             if($LASTEXITCODE -ne 0){throw ('INSTALL_BAT_EXIT='+$LASTEXITCODE)}
 
-            $program='H:\JG Test\仮想マシン\JohnGate'
             $receiptPath=Join-Path $program '_Output\INSTALL_RECEIPT.json'
             if(-not(Test-Path -LiteralPath $receiptPath)){throw 'INSTALL_RECEIPT_MISSING'}
             $r=Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8|ConvertFrom-Json
@@ -58,7 +60,6 @@ jobs:
             $gv=& $gh version 2>&1
             if(($gv -join "`n") -notmatch 'gh version 2\.97\.0'){throw 'INSTALLED_GH_VERSION_FAIL'}
 
-            $download='H:\JG Test\仮想マシン\ジョンダウンロード管理場'
             if(Test-Path -LiteralPath (Join-Path $download 'JohnGateR3InstallTemp')){throw 'INSTALL_TEMP_NOT_CLEANED'}
             if(Test-Path -LiteralPath (Join-Path $download 'JohnGateR3Candidate')){throw 'CANDIDATE_NOT_CLEANED'}
             $rollback=Join-Path $download 'JohnGate_PreR3_Rollback'
