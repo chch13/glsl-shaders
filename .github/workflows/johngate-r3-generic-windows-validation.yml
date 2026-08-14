@@ -1,63 +1,79 @@
-name: JohnGate R3 Generic Windows Validation
+name: JohnGate R3 Sanitized Exact Install Validation
 on:
   push:
     paths:
       - '.github/workflows/johngate-r3-generic-windows-validation.yml'
+      - 'validation/johngate-r3-sanitized-part0.txt'
+      - 'validation/johngate-r3-sanitized-part1.txt'
 jobs:
   validate:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - name: Validate Windows PowerShell and security primitives
+      - uses: actions/checkout@v4
+      - name: Reconstruct sanitized package and run exact installer
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          if($PSVersionTable.PSVersion.Major -ne 5){ throw ('POWERSHELL_MAJOR='+$PSVersionTable.PSVersion.Major) }
-          Add-Type -AssemblyName System.Security
-          Add-Type -AssemblyName System.Windows.Forms
-          $base=Join-Path $env:RUNNER_TEMP 'JG Generic 試験（Windows）'
-          New-Item -ItemType Directory -Path $base -Force | Out-Null
-          subst H: $base
+          $parts=@('.\validation\johngate-r3-sanitized-part0.txt','.\validation\johngate-r3-sanitized-part1.txt')
+          $b64=($parts|ForEach-Object{Get-Content -LiteralPath $_ -Raw}).Trim()
+          $zip=Join-Path $env:RUNNER_TEMP 'JOHN_GATE_R3_SANITIZED_WINTEST.zip'
+          [IO.File]::WriteAllBytes($zip,[Convert]::FromBase64String($b64))
+          $sha=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($sha -ne '6fd3e66e1d504cf2a8a40ed4018762fdc9631e2d8435e4bae4c903d5eda7f9a6'){throw ('SANITIZED_ZIP_SHA_FAIL '+$sha)}
+
+          $hbase=Join-Path $env:RUNNER_TEMP 'JG Sanitized H Drive'
+          New-Item -ItemType Directory -Path $hbase -Force|Out-Null
+          subst H: $hbase
           try {
-            $root='H:\Gate Test\日本語（fixture）'
-            New-Item -ItemType Directory -Path $root -Force | Out-Null
-            'ok' | Set-Content -LiteralPath (Join-Path $root '結果.txt') -Encoding UTF8
-            if((Get-Content -LiteralPath (Join-Path $root '結果.txt') -Raw -Encoding UTF8).Trim() -ne 'ok'){ throw 'UNICODE_PATH_RW_FAIL' }
-            $plain='fixture-secret-'+[Guid]::NewGuid().ToString('N');$pb=[Text.Encoding]::UTF8.GetBytes($plain)
-            $cipher=[Security.Cryptography.ProtectedData]::Protect($pb,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
-            $back=[Security.Cryptography.ProtectedData]::Unprotect($cipher,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
-            if([Text.Encoding]::UTF8.GetString($back) -cne $plain){ throw 'DPAPI_FAIL' }
-            $salt=New-Object byte[] 32;[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($salt)
-            $k=[Security.Cryptography.Rfc2898DeriveBytes]::new('fixture-password',$salt,200000);try{$derived=$k.GetBytes(64)}finally{$k.Dispose()};if($derived.Length -ne 64){throw 'PBKDF2_FAIL'}
-            $aes=[Security.Cryptography.AesManaged]::new();$aes.KeySize=256;$aes.BlockSize=128;$aes.Mode=[Security.Cryptography.CipherMode]::CBC;$aes.Padding=[Security.Cryptography.PaddingMode]::PKCS7;$aes.Key=$derived[0..31];$iv=New-Object byte[] 16;[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($iv);$aes.IV=$iv;$enc=$aes.CreateEncryptor();try{$ct=$enc.TransformFinalBlock($pb,0,$pb.Length)}finally{$enc.Dispose();$aes.Dispose()};if($ct.Length -le 0){throw 'AES_FAIL'}
-            $h=[Security.Cryptography.HMACSHA256]::new($derived[32..63]);try{$tag=$h.ComputeHash($ct)}finally{$h.Dispose()};if($tag.Length -ne 32){throw 'HMAC_FAIL'}
-            $rsa=[Security.Cryptography.RSACryptoServiceProvider]::new(3072);try{$pub=$rsa.ToXmlString($false);$priv=$rsa.ToXmlString($true)}finally{$rsa.PersistKeyInCsp=$false;$rsa.Dispose()};$msg=[Text.Encoding]::UTF8.GetBytes("version=1`nscope=ALL");$r1=New-Object Security.Cryptography.RSACryptoServiceProvider;try{$r1.FromXmlString($priv);$sig=$r1.SignData($msg,'SHA256')}finally{$r1.PersistKeyInCsp=$false;$r1.Dispose()};$r2=New-Object Security.Cryptography.RSACryptoServiceProvider;try{$r2.FromXmlString($pub);$ok=$r2.VerifyData($msg,'SHA256',$sig)}finally{$r2.PersistKeyInCsp=$false;$r2.Dispose()};if(-not $ok){throw 'RSA_SIGN_VERIFY_FAIL'}
-            $bat=Join-Path $root 'START.bat';$batText='@echo off'+"`r`n"+'powershell.exe -NoProfile -Command "exit 0"'+"`r`n";[IO.File]::WriteAllText($bat,$batText,[Text.Encoding]::ASCII);& cmd.exe /d /c ('"'+$bat+'"');if($LASTEXITCODE -ne 0){throw 'BAT_POWERSHELL_ENTRY_FAIL'}
-            $ws=New-Object -ComObject WScript.Shell;$lnk=Join-Path $root 'fixture.lnk';$s=$ws.CreateShortcut($lnk);$s.TargetPath=$bat;$s.WorkingDirectory=$root;$s.Save();if(-not(Test-Path -LiteralPath $lnk)){throw 'SHORTCUT_FAIL'}
-            $stage='H:\Download Stage';New-Item -ItemType Directory -Path $stage -Force|Out-Null;$env:TEMP=$stage;$env:TMP=$stage;$env:GH_CONFIG_DIR=Join-Path $stage 'gh_config';$env:GH_NO_UPDATE_NOTIFIER='1';$env:GH_PROMPT_DISABLED='1';$zip=Join-Path $stage 'gh.zip';Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_windows_amd64.zip' -OutFile $zip;$sha=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant();if($sha -ne '35d7fe05c4dd1411ffda1e73dfc7c6f44b75c936ca51fa6595c657fdc0350cec'){throw ('GH_SHA_FAIL '+$sha)};$expand=Join-Path $stage 'gh';Expand-Archive -LiteralPath $zip -DestinationPath $expand -Force;$gh=(Get-ChildItem -LiteralPath $expand -Filter gh.exe -Recurse -File|Select-Object -First 1).FullName;$v=& $gh version 2>&1;if(($v -join "`n") -notmatch 'gh version 2\.97\.0'){throw 'GH_VERSION_FAIL'};$help=& $gh auth login --help 2>&1;$hs=$help -join "`n";if($hs -notmatch '--web' -or $hs -notmatch '--insecure-storage'){throw 'GH_AUTH_OPTIONS_FAIL'};& $gh config set git_protocol https;if($LASTEXITCODE -ne 0){throw 'GH_CONFIG_SET_FAIL'};if(-not(Test-Path -LiteralPath $env:GH_CONFIG_DIR)){throw 'GH_CONFIG_DIR_FAIL'}
-            Write-Output 'GENERIC_WINDOWS_FIXTURE_PASS'
-          }
-          finally { subst H: /d | Out-Null }
-      - name: Validate transactional install rollback semantics
-        shell: powershell
-        run: |
-          $ErrorActionPreference='Stop'
-          $base=Join-Path $env:RUNNER_TEMP 'JG Rollback Fixture';New-Item -ItemType Directory -Path $base -Force|Out-Null;subst H: $base
-          try {
-            $top='H:\VM Root';$dest=Join-Path $top 'Program';$dl=Join-Path $top 'Stage';$candidate=Join-Path $dl 'Candidate';$rollback=Join-Path $dl 'Rollback';$rollbackProgram=Join-Path $rollback 'Program';$rollbackLinks=Join-Path $rollback 'Links';$linkDefs=@(@('GATE.lnk','START.bat'))
-            New-Item -ItemType Directory -Path $dest -Force|Out-Null;New-Item -ItemType Directory -Path $candidate -Force|Out-Null;'OLD'|Set-Content -LiteralPath (Join-Path $dest 'identity.txt');'NEW'|Set-Content -LiteralPath (Join-Path $candidate 'identity.txt');'@echo off'|Set-Content -LiteralPath (Join-Path $dest 'START.bat') -Encoding ASCII;'@echo off'|Set-Content -LiteralPath (Join-Path $candidate 'START.bat') -Encoding ASCII
-            $ws=New-Object -ComObject WScript.Shell;$oldLink=Join-Path $top 'GATE.lnk';$s=$ws.CreateShortcut($oldLink);$s.TargetPath=(Join-Path $dest 'START.bat');$s.WorkingDirectory=$dest;$s.Save()
-            $hadOld=$true;$rollbackPrepared=$false
-            function Restore-Old {
-              foreach($x in $linkDefs){$lnk=Join-Path $top $x[0];if(Test-Path -LiteralPath $lnk){Remove-Item -LiteralPath $lnk -Force};$saved=Join-Path $rollbackLinks $x[0];if(Test-Path -LiteralPath $saved){Copy-Item -LiteralPath $saved -Destination $lnk -Force}}
-              if(Test-Path -LiteralPath $dest){Remove-Item -LiteralPath $dest -Recurse -Force};if($hadOld -and (Test-Path -LiteralPath $rollbackProgram)){Move-Item -LiteralPath $rollbackProgram -Destination $dest}
+            $stage='H:\JG Test\仮想マシン\ジョンダウンロード管理場\長い パス（試験）\package'
+            New-Item -ItemType Directory -Path $stage -Force|Out-Null
+            Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force
+            $entry=Get-ChildItem -LiteralPath $stage -Filter INSTALL_TO_H.bat -Recurse -File|Select-Object -First 1
+            if($null -eq $entry){throw 'INSTALL_ENTRY_NOT_FOUND'}
+
+            $top='H:\JG Test\仮想マシン'
+            $old=Join-Path $top 'JohnGate'
+            New-Item -ItemType Directory -Path $old -Force|Out-Null
+            'OLD_INSTALL_SENTINEL'|Set-Content -LiteralPath (Join-Path $old 'OLD_SENTINEL.txt') -Encoding ASCII
+            '@echo off'|Set-Content -LiteralPath (Join-Path $old 'START.bat') -Encoding ASCII
+            '@echo off'|Set-Content -LiteralPath (Join-Path $old 'FIRST_SETUP.bat') -Encoding ASCII
+            '@echo off'|Set-Content -LiteralPath (Join-Path $old 'SELFTEST.bat') -Encoding ASCII
+            $ws=New-Object -ComObject WScript.Shell
+            foreach($d in @(@('JOHN_GATE.lnk','START.bat'),@('JOHN_GATE_FIRST_SETUP.lnk','FIRST_SETUP.bat'),@('JOHN_GATE_SELFTEST.lnk','SELFTEST.bat'))){
+              $lnk=Join-Path $top $d[0];$s=$ws.CreateShortcut($lnk);$s.TargetPath=(Join-Path $old $d[1]);$s.WorkingDirectory=$old;$s.Save()
             }
-            try {
-              New-Item -ItemType Directory -Path $rollbackLinks -Force|Out-Null;Copy-Item -LiteralPath $oldLink -Destination (Join-Path $rollbackLinks 'GATE.lnk') -Force;Move-Item -LiteralPath $dest -Destination $rollbackProgram;$rollbackPrepared=$true;Move-Item -LiteralPath $candidate -Destination $dest;$s=$ws.CreateShortcut($oldLink);$s.TargetPath=(Join-Path $dest 'START.bat');$s.WorkingDirectory=$dest;$s.Save();throw 'FORCED_POST_INSTALL_FAILURE'
-            } catch { if($rollbackPrepared){Restore-Old} }
-            if((Get-Content -LiteralPath (Join-Path $dest 'identity.txt') -Raw).Trim() -ne 'OLD'){throw 'ROLLBACK_PROGRAM_FAIL'}
-            $restored=$ws.CreateShortcut($oldLink);if($restored.TargetPath -notlike '*Program\START.bat'){throw 'ROLLBACK_LINK_FAIL'}
-            if(Test-Path -LiteralPath $rollbackProgram){throw 'ROLLBACK_PROGRAM_SHOULD_HAVE_MOVED_BACK'}
-            Write-Output 'TRANSACTIONAL_ROLLBACK_FIXTURE_PASS'
+
+            & cmd.exe /d /c ('call "'+$entry.FullName+'"')
+            if($LASTEXITCODE -ne 0){throw ('INSTALL_BAT_EXIT='+$LASTEXITCODE)}
+
+            $program='H:\JG Test\仮想マシン\JohnGate'
+            $receiptPath=Join-Path $program '_Output\INSTALL_RECEIPT.json'
+            if(-not(Test-Path -LiteralPath $receiptPath)){throw 'INSTALL_RECEIPT_MISSING'}
+            $r=Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8|ConvertFrom-Json
+            if([string]$r.evidence -ne 'FIXTURE_BEHAVIOR_PASS_CORE_OFFLINE'){throw ('EVIDENCE_FAIL '+[string]$r.evidence)}
+            if([string]$r.gh_version -ne '2.97.0'){throw 'RECEIPT_GH_VERSION_FAIL'}
+            $gh=Join-Path $program 'tools\gh\bin\gh.exe'
+            if(-not(Test-Path -LiteralPath $gh)){throw 'INSTALLED_GH_MISSING'}
+            $gv=& $gh version 2>&1
+            if(($gv -join "`n") -notmatch 'gh version 2\.97\.0'){throw 'INSTALLED_GH_VERSION_FAIL'}
+
+            $download='H:\JG Test\仮想マシン\ジョンダウンロード管理場'
+            if(Test-Path -LiteralPath (Join-Path $download 'JohnGateR3InstallTemp')){throw 'INSTALL_TEMP_NOT_CLEANED'}
+            if(Test-Path -LiteralPath (Join-Path $download 'JohnGateR3Candidate')){throw 'CANDIDATE_NOT_CLEANED'}
+            $rollback=Join-Path $download 'JohnGate_PreR3_Rollback'
+            if(-not(Test-Path -LiteralPath (Join-Path $rollback 'Program\OLD_SENTINEL.txt'))){throw 'OLD_PROGRAM_ROLLBACK_MISSING'}
+            foreach($n in @('JOHN_GATE.lnk','JOHN_GATE_FIRST_SETUP.lnk','JOHN_GATE_SELFTEST.lnk')){
+              if(-not(Test-Path -LiteralPath (Join-Path $rollback ('Links\'+$n)))){throw ('OLD_LINK_ROLLBACK_MISSING '+$n)}
+              if(-not(Test-Path -LiteralPath (Join-Path $top $n))){throw ('NEW_LINK_MISSING '+$n)}
+            }
+
+            $self=Get-Content -LiteralPath (Join-Path $program '_Output\SELFTEST_RECEIPT.json') -Raw -Encoding UTF8|ConvertFrom-Json
+            if([int]$self.failed -ne 0){throw ('SELFTEST_FAILURE_COUNT='+[int]$self.failed)}
+            Write-Output ('SANITIZED_EXACT_INSTALL_PASS sha='+$sha)
+            Write-Output ('INSTALL_EVIDENCE='+[string]$r.evidence)
+            Write-Output ('SELFTEST_PASSED='+[int]$self.passed)
           }
-          finally { subst H: /d | Out-Null }
+          finally {
+            subst H: /d | Out-Null
+          }
