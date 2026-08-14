@@ -1,4 +1,4 @@
-name: JohnGate R3 Shortcut Diagnostic
+name: JohnGate R3 Unicode Shortcut Diagnostic
 on:
   push:
     paths:
@@ -7,30 +7,91 @@ jobs:
   diag:
     runs-on: windows-latest
     steps:
-      - name: Compare BAT direct target vs cmd wrapper
+      - name: Create read back and launch Unicode shell link
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           function U([string]$b){[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b))}
-          $base=Join-Path $env:RUNNER_TEMP 'JG Shortcut H';New-Item -ItemType Directory -Path $base -Force|Out-Null;subst H: $base
+          $src=@'
+          using System;
+          using System.Text;
+          using System.Runtime.InteropServices;
+          using System.Runtime.InteropServices.ComTypes;
+          namespace JohnShellLink {
+            [ComImport, Guid("00021401-0000-0000-C000-000000000046")]
+            public class ShellLink {}
+            [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("000214F9-0000-0000-C000-000000000046")]
+            public interface IShellLinkW {
+              void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder file, int cch, IntPtr data, uint flags);
+              void GetIDList(out IntPtr pidl);
+              void SetIDList(IntPtr pidl);
+              void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder name, int cch);
+              void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string name);
+              void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder dir, int cch);
+              void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string dir);
+              void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder args, int cch);
+              void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string args);
+              void GetHotkey(out short hotkey);
+              void SetHotkey(short hotkey);
+              void GetShowCmd(out int showCmd);
+              void SetShowCmd(int showCmd);
+              void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder iconPath, int cch, out int icon);
+              void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string iconPath, int icon);
+              void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string pathRel, uint reserved);
+              void Resolve(IntPtr hwnd, uint flags);
+              void SetPath([MarshalAs(UnmanagedType.LPWStr)] string file);
+            }
+            public static class Link {
+              public static void Create(string linkPath, string target, string workingDir) {
+                IShellLinkW sl=(IShellLinkW)new ShellLink();
+                try {
+                  sl.SetPath(target);
+                  sl.SetWorkingDirectory(workingDir);
+                  IPersistFile pf=(IPersistFile)sl;
+                  pf.Save(linkPath,true);
+                } finally { Marshal.FinalReleaseComObject(sl); }
+              }
+              public static string ReadTarget(string linkPath) {
+                IShellLinkW sl=(IShellLinkW)new ShellLink();
+                try {
+                  IPersistFile pf=(IPersistFile)sl;
+                  pf.Load(linkPath,0);
+                  StringBuilder b=new StringBuilder(32768);
+                  sl.GetPath(b,b.Capacity,IntPtr.Zero,0);
+                  return b.ToString();
+                } finally { Marshal.FinalReleaseComObject(sl); }
+              }
+              public static string ReadWorkingDir(string linkPath) {
+                IShellLinkW sl=(IShellLinkW)new ShellLink();
+                try {
+                  IPersistFile pf=(IPersistFile)sl;
+                  pf.Load(linkPath,0);
+                  StringBuilder b=new StringBuilder(32768);
+                  sl.GetWorkingDirectory(b,b.Capacity);
+                  return b.ToString();
+                } finally { Marshal.FinalReleaseComObject(sl); }
+              }
+            }
+          }
+          '@
+          Add-Type -TypeDefinition $src -Language CSharp
+          $base=Join-Path $env:RUNNER_TEMP 'JG Unicode Shortcut H';New-Item -ItemType Directory -Path $base -Force|Out-Null;subst H: $base
           try {
             $top=U 'SDpcSkcgVGVzdFzku67mg7Pjg57jgrfjg7M='
             $program=U 'SDpcSkcgVGVzdFzku67mg7Pjg57jgrfjg7NcSm9obkdhdGU='
             New-Item -ItemType Directory -Path $program -Force|Out-Null
             $bat=Join-Path $program 'START.bat'
-            [IO.File]::WriteAllText($bat,"@echo off`r`nexit /b 0`r`n",[Text.Encoding]::ASCII)
-            Write-Output ('PROGRAM_EXISTS='+(Test-Path -LiteralPath $program))
-            Write-Output ('BAT_EXISTS='+(Test-Path -LiteralPath $bat))
-            Write-Output ('BAT_FULLNAME='+(Get-Item -LiteralPath $bat).FullName)
-            $ws=New-Object -ComObject WScript.Shell
-            $direct=Join-Path $top 'DIRECT.lnk'
-            try {$s=$ws.CreateShortcut($direct);$s.TargetPath=$bat;$s.WorkingDirectory=$program;$s.Save();Write-Output 'DIRECT_BAT_SHORTCUT_PASS'} catch {Write-Output ('DIRECT_BAT_SHORTCUT_FAIL='+$_.Exception.Message)}
-            $wrapped=Join-Path $top 'WRAPPED.lnk'
-            $cmd=$env:ComSpec
-            $s=$ws.CreateShortcut($wrapped);$s.TargetPath=$cmd;$s.Arguments=('/d /c ""'+$bat+'""');$s.WorkingDirectory=$program;$s.Save()
-            if(-not(Test-Path -LiteralPath $wrapped)){throw 'WRAPPED_SHORTCUT_MISSING'}
-            Write-Output 'CMD_WRAPPED_SHORTCUT_PASS'
-            $loaded=$ws.CreateShortcut($wrapped)
-            Write-Output ('WRAPPED_TARGET='+$loaded.TargetPath)
-            Write-Output ('WRAPPED_ARGS='+$loaded.Arguments)
+            [IO.File]::WriteAllText($bat,"@echo off`r`necho OK^>\"%~dp0ran.txt\"`r`nexit /b 0`r`n",[Text.Encoding]::ASCII)
+            $link=Join-Path $top 'UNICODE_LINK.lnk'
+            [JohnShellLink.Link]::Create($link,$bat,$program)
+            if(-not(Test-Path -LiteralPath $link)){throw 'UNICODE_LINK_SAVE_FAIL'}
+            $target=[JohnShellLink.Link]::ReadTarget($link)
+            $wd=[JohnShellLink.Link]::ReadWorkingDir($link)
+            if($target -cne $bat){throw ('UNICODE_LINK_TARGET_READBACK_FAIL actual='+$target)}
+            if($wd -cne $program){throw ('UNICODE_LINK_WD_READBACK_FAIL actual='+$wd)}
+            Start-Process -FilePath $link -Wait
+            $sentinel=Join-Path $program 'ran.txt'
+            if(-not(Test-Path -LiteralPath $sentinel)){throw 'UNICODE_LINK_LAUNCH_FAIL'}
+            if((Get-Content -LiteralPath $sentinel -Raw).Trim() -ne 'OK'){throw 'UNICODE_LINK_SENTINEL_FAIL'}
+            Write-Output 'ISHELLLINKW_UNICODE_SAVE_READBACK_LAUNCH_PASS'
           } finally {subst H: /d|Out-Null}
