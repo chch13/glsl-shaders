@@ -1,0 +1,36 @@
+name: JohnGate R3 Shortcut Diagnostic
+on:
+  push:
+    paths:
+      - '.github/workflows/johngate-r3-shortcut-diag.yml'
+jobs:
+  diag:
+    runs-on: windows-latest
+    steps:
+      - name: Compare BAT direct target vs cmd wrapper
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          function U([string]$b){[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b))}
+          $base=Join-Path $env:RUNNER_TEMP 'JG Shortcut H';New-Item -ItemType Directory -Path $base -Force|Out-Null;subst H: $base
+          try {
+            $top=U 'SDpcSkcgVGVzdFzku67mg7Pjg57jgrfjg7M='
+            $program=U 'SDpcSkcgVGVzdFzku67mg7Pjg57jgrfjg7NcSm9obkdhdGU='
+            New-Item -ItemType Directory -Path $program -Force|Out-Null
+            $bat=Join-Path $program 'START.bat'
+            [IO.File]::WriteAllText($bat,"@echo off`r`nexit /b 0`r`n",[Text.Encoding]::ASCII)
+            Write-Output ('PROGRAM_EXISTS='+(Test-Path -LiteralPath $program))
+            Write-Output ('BAT_EXISTS='+(Test-Path -LiteralPath $bat))
+            Write-Output ('BAT_FULLNAME='+(Get-Item -LiteralPath $bat).FullName)
+            $ws=New-Object -ComObject WScript.Shell
+            $direct=Join-Path $top 'DIRECT.lnk'
+            try {$s=$ws.CreateShortcut($direct);$s.TargetPath=$bat;$s.WorkingDirectory=$program;$s.Save();Write-Output 'DIRECT_BAT_SHORTCUT_PASS'} catch {Write-Output ('DIRECT_BAT_SHORTCUT_FAIL='+$_.Exception.Message)}
+            $wrapped=Join-Path $top 'WRAPPED.lnk'
+            $cmd=$env:ComSpec
+            $s=$ws.CreateShortcut($wrapped);$s.TargetPath=$cmd;$s.Arguments=('/d /c ""'+$bat+'""');$s.WorkingDirectory=$program;$s.Save()
+            if(-not(Test-Path -LiteralPath $wrapped)){throw 'WRAPPED_SHORTCUT_MISSING'}
+            Write-Output 'CMD_WRAPPED_SHORTCUT_PASS'
+            $loaded=$ws.CreateShortcut($wrapped)
+            Write-Output ('WRAPPED_TARGET='+$loaded.TargetPath)
+            Write-Output ('WRAPPED_ARGS='+$loaded.Arguments)
+          } finally {subst H: /d|Out-Null}
