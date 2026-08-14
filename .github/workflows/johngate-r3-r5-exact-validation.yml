@@ -25,6 +25,7 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
+          function U([string]$b){[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b))}
           $parts=0..9|ForEach-Object{'.\validation\r3r5-part-{0:D2}.txt' -f $_}
           $expected=@(3000,3000,3000,3000,3000,3000,3000,3000,3000,1948)
           for($i=0;$i -lt $parts.Count;$i++){
@@ -46,15 +47,15 @@ jobs:
           New-Item -ItemType Directory -Path $hbase -Force|Out-Null
           subst H: $hbase
           try {
-            $stage=Join-Path $env:RUNNER_TEMP 'JohnGate 日本語 (exact fixture)\長い パス\package'
+            $stage=Join-Path $env:RUNNER_TEMP (U 'Sm9obkdhdGUg5pel5pys6KqeIChleGFjdCBmaXh0dXJlKVzplbfjgYQg44OR44K5XHBhY2thZ2U=')
             New-Item -ItemType Directory -Path $stage -Force|Out-Null
             Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force
             $entry=Get-ChildItem -LiteralPath $stage -Filter INSTALL_TO_H.bat -Recurse -File|Select-Object -First 1
             if($null -eq $entry){throw 'INSTALL_ENTRY_NOT_FOUND'}
 
-            $top='H:\ジョン仮想マシン'
+            $top=U 'SDpc44K444On44Oz5Luu5oOz44Oe44K344Oz'
             $program=Join-Path $top 'JohnGate'
-            $download=Join-Path $top 'ジョンダウンロード管理場'
+            $download=U 'SDpc44K444On44Oz5Luu5oOz44Oe44K344OzXOOCuOODp+ODs+ODgOOCpuODs+ODreODvOODieeuoeeQhuWgtA=='
             $rollback=Join-Path $download 'JohnGate_PreR3_Rollback'
             $defs=@(@('JOHN_GATE.lnk','START.bat'),@('JOHN_GATE_FIRST_SETUP.lnk','FIRST_SETUP.bat'),@('JOHN_GATE_SELFTEST.lnk','SELFTEST.bat'))
             if(Test-Path -LiteralPath $program){throw 'FRESH_PRECONDITION_PROGRAM_EXISTS'}
