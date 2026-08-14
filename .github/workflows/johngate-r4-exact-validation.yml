@@ -1,0 +1,174 @@
+name: JohnGate R4 Exact Windows Validation
+on:
+  push:
+    paths:
+      - '.github/workflows/johngate-r4-exact-validation.yml'
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build R4 candidate from verified R3 sanitized bytes
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          function U([string]$b){[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b))}
+          function Write-Ps1([string]$path,[string]$text){
+            $text=$text.Replace("`r`n","`n").Replace("`r","`n").Replace("`n","`r`n")
+            [IO.File]::WriteAllText($path,$text,(New-Object Text.UTF8Encoding($true)))
+          }
+          $parts=@('.\validation\johngate-r3-chunk-00.txt','.\validation\johngate-r3-chunk-01.txt','.\validation\johngate-r3-chunk-02a.txt','.\validation\johngate-r3-chunk-02b.txt','.\validation\johngate-r3-chunk-03.txt','.\validation\johngate-r3-chunk-04.txt')
+          $expected=@(5526,5526,2763,2764,5526,5527)
+          for($i=0;$i -lt $parts.Count;$i++){
+            $x=Get-Content -LiteralPath $parts[$i] -Raw
+            if($x.Length -ne $expected[$i]){throw ('CHUNK_LENGTH_FAIL index='+$i+' actual='+$x.Length)}
+          }
+          $b64=($parts|ForEach-Object{Get-Content -LiteralPath $_ -Raw}) -join ''
+          if($b64.Length -ne 27632){throw ('TOTAL_BASE64_LENGTH_FAIL '+$b64.Length)}
+          $zip=Join-Path $env:RUNNER_TEMP 'JG_R3_SANITIZED.zip'
+          [IO.File]::WriteAllBytes($zip,[Convert]::FromBase64String($b64))
+          $sha=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($sha -ne '6fd3e66e1d504cf2a8a40ed4018762fdc9631e2d8435e4bae4c903d5eda7f9a6'){throw ('SOURCE_SHA_FAIL '+$sha)}
+          $extract=Join-Path $env:RUNNER_TEMP 'JG_R4_CANDIDATE'
+          New-Item -ItemType Directory -Path $extract -Force|Out-Null
+          Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force
+          $entry=Get-ChildItem -LiteralPath $extract -Filter INSTALL_TO_H.bat -Recurse -File|Select-Object -First 1
+          if($null -eq $entry){throw 'INSTALL_ENTRY_NOT_FOUND'}
+          $pkg=$entry.Directory.FullName
+
+          $helper=@'
+          $ErrorActionPreference = "Stop"
+          if (-not ("JohnGate.ShortcutFactory" -as [type])) {
+          $src = @"
+          using System;
+          using System.IO;
+          using System.Text;
+          using System.Runtime.InteropServices;
+          using System.Runtime.InteropServices.ComTypes;
+          namespace JohnGate {
+            [ComImport, Guid("00021401-0000-0000-C000-000000000046")]
+            internal class ShellLinkCoClass { }
+            [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("000214F9-0000-0000-C000-000000000046")]
+            internal interface IShellLinkW {
+              [PreserveSig] int GetPath([Out,MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszFile,int cch,IntPtr pfd,uint fFlags);
+              [PreserveSig] int GetIDList(out IntPtr ppidl);
+              [PreserveSig] int SetIDList(IntPtr pidl);
+              [PreserveSig] int GetDescription([Out,MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszName,int cch);
+              [PreserveSig] int SetDescription([MarshalAs(UnmanagedType.LPWStr)] string pszName);
+              [PreserveSig] int GetWorkingDirectory([Out,MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszDir,int cch);
+              [PreserveSig] int SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string pszDir);
+              [PreserveSig] int GetArguments([Out,MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszArgs,int cch);
+              [PreserveSig] int SetArguments([MarshalAs(UnmanagedType.LPWStr)] string pszArgs);
+              [PreserveSig] int GetHotkey(out short pwHotkey);
+              [PreserveSig] int SetHotkey(short wHotkey);
+              [PreserveSig] int GetShowCmd(out int piShowCmd);
+              [PreserveSig] int SetShowCmd(int iShowCmd);
+              [PreserveSig] int GetIconLocation([Out,MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszIconPath,int cch,out int piIcon);
+              [PreserveSig] int SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string pszIconPath,int iIcon);
+              [PreserveSig] int SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string pszPathRel,uint dwReserved);
+              [PreserveSig] int Resolve(IntPtr hwnd,uint fFlags);
+              [PreserveSig] int SetPath([MarshalAs(UnmanagedType.LPWStr)] string pszFile);
+            }
+            public sealed class ShortcutProxy {
+              public string LinkPath {get;set;} public string TargetPath {get;set;} public string WorkingDirectory {get;set;} public string Arguments {get;set;}
+              internal ShortcutProxy(string p){LinkPath=p;TargetPath="";WorkingDirectory="";Arguments="";}
+              public void Save(){ShellLinkUnicode.Save(LinkPath,TargetPath,WorkingDirectory,Arguments);}
+            }
+            public sealed class ShortcutFactory {
+              public ShortcutProxy CreateShortcut(string path){var p=new ShortcutProxy(path);if(File.Exists(path)){var d=ShellLinkUnicode.Load(path);p.TargetPath=d[0];p.WorkingDirectory=d[1];p.Arguments=d[2];}return p;}
+            }
+            internal static class ShellLinkUnicode {
+              static void Check(int hr){if(hr<0)Marshal.ThrowExceptionForHR(hr);}
+              internal static void Save(string path,string target,string work,string args){object o=new ShellLinkCoClass();try{var l=(IShellLinkW)o;Check(l.SetPath(target??""));if(!String.IsNullOrEmpty(work))Check(l.SetWorkingDirectory(work));if(!String.IsNullOrEmpty(args))Check(l.SetArguments(args));((IPersistFile)o).Save(path,true);}finally{if(Marshal.IsComObject(o))Marshal.FinalReleaseComObject(o);}}
+              internal static string[] Load(string path){object o=new ShellLinkCoClass();try{((IPersistFile)o).Load(path,0);var l=(IShellLinkW)o;var t=new StringBuilder(32768);var w=new StringBuilder(32768);var a=new StringBuilder(32768);Check(l.GetPath(t,t.Capacity,IntPtr.Zero,0));Check(l.GetWorkingDirectory(w,w.Capacity));Check(l.GetArguments(a,a.Capacity));return new[]{t.ToString(),w.ToString(),a.ToString()};}finally{if(Marshal.IsComObject(o))Marshal.FinalReleaseComObject(o);}}
+            }
+          }
+          "@
+            Add-Type -TypeDefinition $src -Language CSharp
+          }
+          function New-JohnGateShortcutFactory { return (New-Object JohnGate.ShortcutFactory) }
+          '@
+          $helper=$helper -replace '(?m)^          ',''
+
+          $hits=0
+          Get-ChildItem -LiteralPath $pkg -Filter *.ps1 -Recurse -File|ForEach-Object{
+            $s=Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8
+            if($s.Contains('WScript.Shell')){
+              $n=([regex]::Matches($s,'New-Object -ComObject WScript\.Shell')).Count
+              if($n -lt 1){throw ('UNSUPPORTED_WSCRIPT_FORM '+$_.FullName)}
+              $repl="(& { . (Join-Path `$PSScriptRoot 'Shortcut-Unicode.ps1'); New-JohnGateShortcutFactory })"
+              $s=$s.Replace('New-Object -ComObject WScript.Shell',$repl)
+              if($s.Contains('WScript.Shell')){throw ('WSCRIPT_REMAINS '+$_.FullName)}
+              Write-Ps1 $_.FullName $s
+              Write-Ps1 (Join-Path $_.Directory.FullName 'Shortcut-Unicode.ps1') $helper
+              $hits+=$n
+            }
+          }
+          if($hits -lt 1){throw 'NO_WSCRIPT_HITS'}
+          $badRemain=@(Get-ChildItem -LiteralPath $pkg -Filter *.ps1 -Recurse -File|Where-Object{(Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8).Contains('WScript.Shell')})
+          if($badRemain.Count -gt 0){throw ('WSCRIPT_REMAINS_AFTER_PATCH '+$badRemain.Count)}
+
+          # Delivery encoding and parser gates.
+          Get-ChildItem -LiteralPath $pkg -Recurse -File|ForEach-Object{
+            $b=[IO.File]::ReadAllBytes($_.FullName)
+            if($_.Extension -in @('.bat','.cmd')){
+              if($b.Length -ge 3 -and $b[0]-eq 0xEF -and $b[1]-eq 0xBB -and $b[2]-eq 0xBF){throw ('BAT_BOM '+$_.FullName)}
+              if(@($b|Where-Object{$_ -ge 128}).Count -gt 0){throw ('BAT_NON_ASCII '+$_.FullName)}
+              $t=[Text.Encoding]::ASCII.GetString($b);if($t.Replace("`r`n",'').Contains("`n")){throw ('BAT_NOT_CRLF '+$_.FullName)}
+            }
+            if($_.Extension -eq '.ps1'){
+              if($b.Length -lt 3 -or $b[0]-ne 0xEF -or $b[1]-ne 0xBB -or $b[2]-ne 0xBF){throw ('PS1_NO_UTF8_BOM '+$_.FullName)}
+              $tok=$null;$err=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName,[ref]$tok,[ref]$err)
+              if($err.Count -gt 0){throw ('PS_PARSE_FAIL '+$_.Name+' '+(($err|ForEach-Object{$_.Message}) -join '|'))}
+            }
+          }
+          "PKGROOT=$pkg"|Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "ENTRY=$($entry.FullName)"|Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "PATCH_HITS=$hits"|Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Upgrade install with Unicode shortcut readback
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          function U([string]$b){[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b))}
+          $hbase=Join-Path $env:RUNNER_TEMP 'JG_R4_UPGRADE_H';New-Item -ItemType Directory -Path $hbase -Force|Out-Null;subst H: $hbase
+          try{
+            $top=U 'SDpcSkcgVGVzdFzku67mg7Pjg57jgrfjg7M='
+            $program=U 'SDpcSkcgVGVzdFzku67mg7Pjg57jgrfjg7NcSm9obkdhdGU='
+            $download=U 'SDpcSkcgVGVzdFzku67mg7Pjg57jgrfjg7Nc44K444On44Oz44OA44Km44Oz44Ot44O844OJ566h55CG5aC0'
+            New-Item -ItemType Directory -Path $program -Force|Out-Null
+            'OLD_INSTALL_SENTINEL'|Set-Content -LiteralPath (Join-Path $program 'OLD_SENTINEL.txt') -Encoding ASCII
+            foreach($n in @('START.bat','FIRST_SETUP.bat','SELFTEST.bat')){[IO.File]::WriteAllText((Join-Path $program $n),"@echo off`r`nexit /b 0`r`n",[Text.Encoding]::ASCII)}
+            . (Join-Path $env:PKGROOT 'Shortcut-Unicode.ps1');$f=New-JohnGateShortcutFactory
+            foreach($d in @(@('JOHN_GATE.lnk','START.bat'),@('JOHN_GATE_FIRST_SETUP.lnk','FIRST_SETUP.bat'),@('JOHN_GATE_SELFTEST.lnk','SELFTEST.bat'))){$s=$f.CreateShortcut((Join-Path $top $d[0]));$s.TargetPath=(Join-Path $program $d[1]);$s.WorkingDirectory=$program;$s.Save();$r=$f.CreateShortcut((Join-Path $top $d[0]));if($r.TargetPath -ne (Join-Path $program $d[1])){throw ('PREINSTALL_LINK_READBACK '+$d[0])}}
+            & cmd.exe /d /c ('call "'+$env:ENTRY+'"');if($LASTEXITCODE -ne 0){throw ('INSTALL_EXIT '+$LASTEXITCODE)}
+            $receipt=Join-Path $program '_Output\INSTALL_RECEIPT.json';if(-not(Test-Path -LiteralPath $receipt)){throw 'INSTALL_RECEIPT_MISSING'}
+            $ir=Get-Content -LiteralPath $receipt -Raw -Encoding UTF8|ConvertFrom-Json;if([string]$ir.evidence -ne 'FIXTURE_BEHAVIOR_PASS_CORE_OFFLINE'){throw ('EVIDENCE_FAIL '+[string]$ir.evidence)}
+            $sr=Get-Content -LiteralPath (Join-Path $program '_Output\SELFTEST_RECEIPT.json') -Raw -Encoding UTF8|ConvertFrom-Json;if([int]$sr.failed -ne 0){throw ('SELFTEST_FAILED '+[int]$sr.failed)}
+            $installedHelper=Join-Path $program 'Shortcut-Unicode.ps1';if(-not(Test-Path -LiteralPath $installedHelper)){throw 'INSTALLED_UNICODE_HELPER_MISSING'}
+            . $installedHelper;$f=New-JohnGateShortcutFactory
+            foreach($d in @(@('JOHN_GATE.lnk','START.bat'),@('JOHN_GATE_FIRST_SETUP.lnk','FIRST_SETUP.bat'),@('JOHN_GATE_SELFTEST.lnk','SELFTEST.bat'))){$r=$f.CreateShortcut((Join-Path $top $d[0]));if($r.TargetPath -ne (Join-Path $program $d[1])){throw ('POSTINSTALL_LINK_TARGET '+$d[0])};if($r.WorkingDirectory -ne $program){throw ('POSTINSTALL_LINK_WORKDIR '+$d[0])}}
+            $rollback=Join-Path $download 'JohnGate_PreR3_Rollback';if(-not(Test-Path -LiteralPath (Join-Path $rollback 'Program\OLD_SENTINEL.txt'))){throw 'ROLLBACK_PROGRAM_MISSING'}
+            foreach($n in @('JOHN_GATE.lnk','JOHN_GATE_FIRST_SETUP.lnk','JOHN_GATE_SELFTEST.lnk')){if(-not(Test-Path -LiteralPath (Join-Path $rollback ('Links\'+$n)))){throw ('ROLLBACK_LINK_MISSING '+$n)}}
+            if(Test-Path -LiteralPath (Join-Path $download 'JohnGateR3InstallTemp')){throw 'TEMP_REMAINS'}
+            if(Test-Path -LiteralPath (Join-Path $download 'JohnGateR3Candidate')){throw 'CANDIDATE_REMAINS'}
+            Write-Output ('UPGRADE_PASS selftest='+[int]$sr.passed+' patch_hits='+$env:PATCH_HITS)
+          }finally{subst H: /d|Out-Null}
+
+      - name: Clean install with Unicode shortcut readback
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          function U([string]$b){[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b))}
+          $hbase=Join-Path $env:RUNNER_TEMP 'JG_R4_CLEAN_H';New-Item -ItemType Directory -Path $hbase -Force|Out-Null;subst H: $hbase
+          try{
+            $top=U 'SDpcSkcgVGVzdFzku67mg7Pjg57jgrfjg7M='
+            $program=U 'SDpcSkcgVGVzdFzku67mg7Pjg57jgrfjg7NcSm9obkdhdGU='
+            & cmd.exe /d /c ('call "'+$env:ENTRY+'"');if($LASTEXITCODE -ne 0){throw ('CLEAN_INSTALL_EXIT '+$LASTEXITCODE)}
+            $ir=Get-Content -LiteralPath (Join-Path $program '_Output\INSTALL_RECEIPT.json') -Raw -Encoding UTF8|ConvertFrom-Json;if([string]$ir.evidence -ne 'FIXTURE_BEHAVIOR_PASS_CORE_OFFLINE'){throw 'CLEAN_EVIDENCE_FAIL'}
+            $sr=Get-Content -LiteralPath (Join-Path $program '_Output\SELFTEST_RECEIPT.json') -Raw -Encoding UTF8|ConvertFrom-Json;if([int]$sr.failed -ne 0){throw ('CLEAN_SELFTEST_FAILED '+[int]$sr.failed)}
+            . (Join-Path $program 'Shortcut-Unicode.ps1');$f=New-JohnGateShortcutFactory
+            foreach($d in @(@('JOHN_GATE.lnk','START.bat'),@('JOHN_GATE_FIRST_SETUP.lnk','FIRST_SETUP.bat'),@('JOHN_GATE_SELFTEST.lnk','SELFTEST.bat'))){$r=$f.CreateShortcut((Join-Path $top $d[0]));if($r.TargetPath -ne (Join-Path $program $d[1])){throw ('CLEAN_LINK_TARGET '+$d[0])};if($r.WorkingDirectory -ne $program){throw ('CLEAN_LINK_WORKDIR '+$d[0])}}
+            Write-Output ('CLEAN_INSTALL_PASS selftest='+[int]$sr.passed)
+          }finally{subst H: /d|Out-Null}
