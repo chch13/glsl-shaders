@@ -1,18 +1,18 @@
-name: JohnGate R3R3 Sanitized Exact Windows Validation
+name: JohnGate R3R4 Sanitized Exact Windows Validation
 on:
   push:
     paths:
       - '.github/workflows/johngate-r3-generic-windows-validation.yml'
-      - 'validation/r3r3-part-00.txt'
-      - 'validation/r3r3-part-01.txt'
-      - 'validation/r3r3-part-02.txt'
-      - 'validation/r3r3-part-03.txt'
-      - 'validation/r3r3-part-04.txt'
-      - 'validation/r3r3-part-05.txt'
-      - 'validation/r3r3-part-06.txt'
-      - 'validation/r3r3-part-07.txt'
-      - 'validation/r3r3-part-08.txt'
-      - 'validation/r3r3-part-09.txt'
+      - 'validation/r3r4-part-00.txt'
+      - 'validation/r3r4-part-01.txt'
+      - 'validation/r3r4-part-02.txt'
+      - 'validation/r3r4-part-03.txt'
+      - 'validation/r3r4-part-04.txt'
+      - 'validation/r3r4-part-05.txt'
+      - 'validation/r3r4-part-06.txt'
+      - 'validation/r3r4-part-07.txt'
+      - 'validation/r3r4-part-08.txt'
+      - 'validation/r3r4-part-09.txt'
 permissions:
   contents: read
 jobs:
@@ -21,27 +21,27 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Reconstruct exact sanitized R3R3 and validate fresh plus upgrade install
+      - name: Reconstruct exact sanitized R3R4 and validate fresh plus upgrade install
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           function U([string]$b){[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b))}
-          $parts=0..9|ForEach-Object{'.\validation\r3r3-part-{0:D2}.txt' -f $_}
-          $expected=@(3000,3000,3000,3000,3000,3000,3000,3000,3000,1428)
+          $parts=0..9|ForEach-Object{'.\validation\r3r4-part-{0:D2}.txt' -f $_}
+          $expected=@(3000,3000,3000,3000,3000,3000,3000,3000,3000,1632)
           for($i=0;$i -lt $parts.Count;$i++){
             $actual=(Get-Content -LiteralPath $parts[$i] -Raw).Length
             if($actual -ne $expected[$i]){throw ('CHUNK_LENGTH_FAIL index='+$i+' expected='+$expected[$i]+' actual='+$actual)}
           }
           $b64=($parts|ForEach-Object{Get-Content -LiteralPath $_ -Raw}) -join ''
-          if($b64.Length -ne 28428){throw ('TOTAL_BASE64_LENGTH_FAIL '+$b64.Length)}
-          $zip=Join-Path $env:RUNNER_TEMP 'JG_R3R3_SANITIZED.zip'
+          if($b64.Length -ne 28632){throw ('TOTAL_BASE64_LENGTH_FAIL '+$b64.Length)}
+          $zip=Join-Path $env:RUNNER_TEMP 'JG_R3R4_SANITIZED.zip'
           [IO.File]::WriteAllBytes($zip,[Convert]::FromBase64String($b64))
           $zipSha=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          if($zipSha -ne '5682ef09061592180611830c6483151f568a164dbc910962ccbe77469c1cd676'){throw ('SANITIZED_ZIP_SHA_FAIL '+$zipSha)}
+          if($zipSha -ne 'f1d05a71c7d97a6e86e33a9359522dcbdab57d64a28900dae9019bca5bbfe238'){throw ('SANITIZED_ZIP_SHA_FAIL '+$zipSha)}
           Write-Output ('ZIP_IDENTITY_PASS '+$zipSha)
 
           if(Test-Path -LiteralPath 'H:\'){throw 'H_ALREADY_PRESENT_ON_HOSTED_RUNNER'}
-          $hbase=Join-Path $env:RUNNER_TEMP 'JG_R3R3_H'
+          $hbase=Join-Path $env:RUNNER_TEMP 'JG_R3R4_H'
           New-Item -ItemType Directory -Path $hbase -Force|Out-Null
           subst H: $hbase
           try {
@@ -61,7 +61,7 @@ jobs:
             $receiptPath=Join-Path $program '_Output\INSTALL_RECEIPT.json'
             if(-not(Test-Path -LiteralPath $receiptPath)){throw 'FRESH_INSTALL_RECEIPT_MISSING'}
             $r=Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8|ConvertFrom-Json
-            if([string]$r.revision -ne 'JOHN_GATE_R3_R3'){throw ('FRESH_REVISION_FAIL '+[string]$r.revision)}
+            if([string]$r.revision -ne 'JOHN_GATE_R3_R4'){throw ('FRESH_REVISION_FAIL '+[string]$r.revision)}
             if([string]$r.evidence -ne 'FIXTURE_BEHAVIOR_PASS_CORE_OFFLINE'){throw ('FRESH_EVIDENCE_FAIL '+[string]$r.evidence)}
             if([string]$r.shortcut_backend -ne 'IShellLinkW_IPersistFile'){throw ('FRESH_SHORTCUT_BACKEND_FAIL '+[string]$r.shortcut_backend)}
             if([bool]$r.rollback_contains_previous_program){throw 'FRESH_FALSE_OLD_DETECTION_FAIL'}
@@ -95,7 +95,7 @@ jobs:
             & cmd.exe /d /c ('call "'+$entry.FullName+'"')
             if($LASTEXITCODE -ne 0){throw ('UPGRADE_INSTALL_EXIT='+$LASTEXITCODE)}
             $r2=Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8|ConvertFrom-Json
-            if([string]$r2.revision -ne 'JOHN_GATE_R3_R3'){throw 'UPGRADE_REVISION_FAIL'}
+            if([string]$r2.revision -ne 'JOHN_GATE_R3_R4'){throw 'UPGRADE_REVISION_FAIL'}
             if(-not [bool]$r2.rollback_contains_previous_program){throw 'UPGRADE_OLD_DETECTION_FAIL'}
             if([string]$r2.shortcut_backend -ne 'IShellLinkW_IPersistFile'){throw 'UPGRADE_SHORTCUT_BACKEND_FAIL'}
             $rbProgram=Join-Path $rollback 'Program'
@@ -118,7 +118,7 @@ jobs:
             $self2=Get-Content -LiteralPath (Join-Path $program '_Output\SELFTEST_RECEIPT.json') -Raw -Encoding UTF8|ConvertFrom-Json
             if([string]$self2.result -ne 'PASS' -or [int]$self2.failed -ne 0 -or [int]$self2.passed -le 0){throw 'UPGRADE_SELFTEST_RECEIPT_FAIL'}
             Write-Output ('UPGRADE_INSTALL_PASS selftest_passed='+[int]$self2.passed)
-            Write-Output 'R3R3_EXACT_WINDOWS_FIXTURE_PASS'
+            Write-Output 'R3R4_EXACT_WINDOWS_FIXTURE_PASS'
           }
           finally {
             subst H: /d | Out-Null
