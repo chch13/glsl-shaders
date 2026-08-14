@@ -1,0 +1,92 @@
+name: JohnGate R3 Generic Windows Validation
+on:
+  push:
+    paths:
+      - '.github/workflows/johngate-r3-generic-windows-validation.yml'
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Validate Windows PowerShell and security primitives
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($PSVersionTable.PSVersion.Major -ne 5){ throw ('POWERSHELL_MAJOR='+$PSVersionTable.PSVersion.Major) }
+          Add-Type -AssemblyName System.Security
+          Add-Type -AssemblyName System.Windows.Forms
+          $base=Join-Path $env:RUNNER_TEMP 'JG Generic 試験（Windows）'
+          New-Item -ItemType Directory -Path $base -Force | Out-Null
+          subst H: $base
+          try {
+            $root='H:\Gate Test\日本語（fixture）'
+            New-Item -ItemType Directory -Path $root -Force | Out-Null
+            'ok' | Set-Content -LiteralPath (Join-Path $root '結果.txt') -Encoding UTF8
+            if((Get-Content -LiteralPath (Join-Path $root '結果.txt') -Raw -Encoding UTF8).Trim() -ne 'ok'){ throw 'UNICODE_PATH_RW_FAIL' }
+
+            $plain='fixture-secret-'+[Guid]::NewGuid().ToString('N')
+            $pb=[Text.Encoding]::UTF8.GetBytes($plain)
+            $cipher=[Security.Cryptography.ProtectedData]::Protect($pb,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
+            $back=[Security.Cryptography.ProtectedData]::Unprotect($cipher,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
+            if([Text.Encoding]::UTF8.GetString($back) -cne $plain){ throw 'DPAPI_FAIL' }
+
+            $salt=New-Object byte[] 32
+            [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($salt)
+            $k=[Security.Cryptography.Rfc2898DeriveBytes]::new('fixture-password',$salt,200000)
+            try{$derived=$k.GetBytes(64)}finally{$k.Dispose()}
+            if($derived.Length -ne 64){ throw 'PBKDF2_FAIL' }
+
+            $aes=[Security.Cryptography.AesManaged]::new()
+            $aes.KeySize=256;$aes.BlockSize=128;$aes.Mode=[Security.Cryptography.CipherMode]::CBC;$aes.Padding=[Security.Cryptography.PaddingMode]::PKCS7
+            $aes.Key=$derived[0..31]
+            $iv=New-Object byte[] 16
+            [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($iv)
+            $aes.IV=$iv
+            $enc=$aes.CreateEncryptor()
+            try{$ct=$enc.TransformFinalBlock($pb,0,$pb.Length)}finally{$enc.Dispose();$aes.Dispose()}
+            if($ct.Length -le 0){ throw 'AES_FAIL' }
+            $h=[Security.Cryptography.HMACSHA256]::new($derived[32..63])
+            try{$tag=$h.ComputeHash($ct)}finally{$h.Dispose()}
+            if($tag.Length -ne 32){ throw 'HMAC_FAIL' }
+
+            $rsa=[Security.Cryptography.RSACryptoServiceProvider]::new(3072)
+            try{$pub=$rsa.ToXmlString($false);$priv=$rsa.ToXmlString($true)}finally{$rsa.PersistKeyInCsp=$false;$rsa.Dispose()}
+            $msg=[Text.Encoding]::UTF8.GetBytes("version=1`nscope=ALL")
+            $r1=New-Object Security.Cryptography.RSACryptoServiceProvider
+            try{$r1.FromXmlString($priv);$sig=$r1.SignData($msg,'SHA256')}finally{$r1.PersistKeyInCsp=$false;$r1.Dispose()}
+            $r2=New-Object Security.Cryptography.RSACryptoServiceProvider
+            try{$r2.FromXmlString($pub);$ok=$r2.VerifyData($msg,'SHA256',$sig)}finally{$r2.PersistKeyInCsp=$false;$r2.Dispose()}
+            if(-not $ok){ throw 'RSA_SIGN_VERIFY_FAIL' }
+
+            $bat=Join-Path $root 'START.bat'
+            [IO.File]::WriteAllText($bat,"@echo off`r`npowershell.exe -NoProfile -Command \"exit 0\"`r`n",[Text.Encoding]::ASCII)
+            & cmd.exe /d /c ('"'+$bat+'"')
+            if($LASTEXITCODE -ne 0){ throw 'BAT_POWERSHELL_ENTRY_FAIL' }
+
+            $ws=New-Object -ComObject WScript.Shell
+            $lnk=Join-Path $root 'fixture.lnk'
+            $s=$ws.CreateShortcut($lnk);$s.TargetPath=$bat;$s.WorkingDirectory=$root;$s.Save()
+            if(-not(Test-Path -LiteralPath $lnk)){ throw 'SHORTCUT_FAIL' }
+
+            $stage='H:\Download Stage'
+            New-Item -ItemType Directory -Path $stage -Force | Out-Null
+            $env:TEMP=$stage;$env:TMP=$stage;$env:GH_CONFIG_DIR=Join-Path $stage 'gh_config';$env:GH_NO_UPDATE_NOTIFIER='1';$env:GH_PROMPT_DISABLED='1'
+            $zip=Join-Path $stage 'gh.zip'
+            Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_windows_amd64.zip' -OutFile $zip
+            $sha=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+            if($sha -ne '35d7fe05c4dd1411ffda1e73dfc7c6f44b75c936ca51fa6595c657fdc0350cec'){ throw ('GH_SHA_FAIL '+$sha) }
+            $expand=Join-Path $stage 'gh';Expand-Archive -LiteralPath $zip -DestinationPath $expand -Force
+            $gh=(Get-ChildItem -LiteralPath $expand -Filter gh.exe -Recurse -File | Select-Object -First 1).FullName
+            $v=& $gh version 2>&1
+            if(($v -join "`n") -notmatch 'gh version 2\.97\.0'){ throw 'GH_VERSION_FAIL' }
+            $help=& $gh auth login --help 2>&1
+            $hs=$help -join "`n"
+            if($hs -notmatch '--web' -or $hs -notmatch '--insecure-storage'){ throw 'GH_AUTH_OPTIONS_FAIL' }
+            & $gh config set git_protocol https
+            if($LASTEXITCODE -ne 0){ throw 'GH_CONFIG_SET_FAIL' }
+            if(-not(Test-Path -LiteralPath $env:GH_CONFIG_DIR)){ throw 'GH_CONFIG_DIR_FAIL' }
+            Write-Output 'GENERIC_WINDOWS_FIXTURE_PASS'
+          }
+          finally {
+            subst H: /d | Out-Null
+          }
