@@ -3,8 +3,12 @@ on:
   push:
     paths:
       - '.github/workflows/johngate-r3-generic-windows-validation.yml'
-      - 'validation/johngate-r3-sanitized-part0.txt'
-      - 'validation/johngate-r3-sanitized-part1.txt'
+      - 'validation/johngate-r3-chunk-00.txt'
+      - 'validation/johngate-r3-chunk-01.txt'
+      - 'validation/johngate-r3-chunk-02a.txt'
+      - 'validation/johngate-r3-chunk-02b.txt'
+      - 'validation/johngate-r3-chunk-03.txt'
+      - 'validation/johngate-r3-chunk-04.txt'
 jobs:
   validate:
     runs-on: windows-latest
@@ -16,8 +20,14 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           function U([string]$b){[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b))}
-          $parts=@('.\validation\johngate-r3-sanitized-part0.txt','.\validation\johngate-r3-sanitized-part1.txt')
-          $b64=($parts|ForEach-Object{Get-Content -LiteralPath $_ -Raw}).Trim()
+          $parts=@('.\validation\johngate-r3-chunk-00.txt','.\validation\johngate-r3-chunk-01.txt','.\validation\johngate-r3-chunk-02a.txt','.\validation\johngate-r3-chunk-02b.txt','.\validation\johngate-r3-chunk-03.txt','.\validation\johngate-r3-chunk-04.txt')
+          $expected=@(5526,5526,2763,2764,5526,5527)
+          for($i=0;$i -lt $parts.Count;$i++){
+            $actual=(Get-Content -LiteralPath $parts[$i] -Raw).Length
+            if($actual -ne $expected[$i]){throw ('CHUNK_LENGTH_FAIL index='+$i+' expected='+$expected[$i]+' actual='+$actual)}
+          }
+          $b64=($parts|ForEach-Object{Get-Content -LiteralPath $_ -Raw}) -join ''
+          if($b64.Length -ne 27632){throw ('TOTAL_BASE64_LENGTH_FAIL '+$b64.Length)}
           $zip=Join-Path $env:RUNNER_TEMP 'JOHN_GATE_R3_SANITIZED_WINTEST.zip'
           [IO.File]::WriteAllBytes($zip,[Convert]::FromBase64String($b64))
           $sha=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
