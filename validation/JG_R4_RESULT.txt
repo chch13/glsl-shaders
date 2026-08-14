@@ -1,0 +1,6 @@
+workflow=JohnGate R4 Exact Windows Validation
+run_id=31823086871
+head_sha=8e1f8cf1438e87d65c39c0bbb8e4cff4c87b6fb8
+conclusion=failure
+event=push
+updated_at=2026-08-14T17:15:22Z
