@@ -81,7 +81,8 @@ jobs:
             $program=U 'SDpcSkcgVGVzdFzku67mg7Pjg57jgrfjg7NcSm9obkdhdGU='
             New-Item -ItemType Directory -Path $program -Force|Out-Null
             $bat=Join-Path $program 'START.bat'
-            [IO.File]::WriteAllText($bat,"@echo off`r`necho OK^>\"%~dp0ran.txt\"`r`nexit /b 0`r`n",[Text.Encoding]::ASCII)
+            $batText='@echo off'+"`r`n"+'echo OK>ran.txt'+"`r`n"+'exit /b 0'+"`r`n"
+            [IO.File]::WriteAllText($bat,$batText,[Text.Encoding]::ASCII)
             $link=Join-Path $top 'UNICODE_LINK.lnk'
             [JohnShellLink.Link]::Create($link,$bat,$program)
             if(-not(Test-Path -LiteralPath $link)){throw 'UNICODE_LINK_SAVE_FAIL'}
